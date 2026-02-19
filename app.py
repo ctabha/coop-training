@@ -8,8 +8,7 @@ from datetime import datetime
 
 import pandas as pd
 from flask import Flask, request, render_template_string, redirect, url_for, send_file
-
-from docx import Document  # python-docx
+from docx import Document
 
 app = Flask(__name__)
 
@@ -27,10 +26,9 @@ OUT_DIR.mkdir(exist_ok=True)
 
 APP_TITLE = "بوابة خطاب التوجيه - التدريب التعاوني"
 
-# ملفات البيانات
-STUDENTS_XLSX = DATA_DIR / "students.xlsx"  # اسم ملفك الصحيح
-TEMPLATE_DOCX = DATA_DIR / "letter_template.docx"  # قالب الخطاب
-SLOTS_FILE = DATA_DIR / "slots_by_specialty.json"  # تخزين الفرص المتبقية
+STUDENTS_XLSX = DATA_DIR / "students.xlsx"
+TEMPLATE_DOCX = DATA_DIR / "letter_template.docx"
+SLOTS_FILE = DATA_DIR / "slots_by_specialty.json"
 
 # =========================
 # Helpers
@@ -49,13 +47,11 @@ def find_col(df: pd.DataFrame, candidates: list[str]) -> str:
     cols = [str(c) for c in df.columns]
     norm_map = {norm_key(c): c for c in cols}
 
-    # تطابق مباشر
     for cand in candidates:
         k = norm_key(cand)
         if k in norm_map:
             return norm_map[k]
 
-    # تطابق جزئي
     for cand in candidates:
         kc = norm_key(cand)
         for real in cols:
@@ -64,62 +60,90 @@ def find_col(df: pd.DataFrame, candidates: list[str]) -> str:
 
     raise KeyError(f"لم أجد عمود من: {candidates}\nالأعمدة الموجودة: {cols}")
 
+# =========================
+# Excel robust loader (الإصلاح الأساسي)
+# =========================
+def detect_header_row(raw: pd.DataFrame) -> int | None:
+    """
+    raw: dataframe header=None (كل شيء كبيانات)
+    نبحث في أول 40 صف عن صف يحتوي على عناوين مثل:
+    رقم المتدرب / اسم المتدرب / رقم الجوال
+    """
+    must_have = ["رقم المتدرب", "اسم المتدرب", "رقم الجوال"]
+    must_have_norm = [norm_key(x) for x in must_have]
+
+    max_rows = min(40, len(raw))
+    for r in range(max_rows):
+        row_vals = [norm_key(v) for v in raw.iloc[r].tolist()]
+        score = 0
+        for mh in must_have_norm:
+            if any(mh and mh == v for v in row_vals) or any(mh and mh in v for v in row_vals):
+                score += 1
+        if score >= 2:  # يكفي وجود 2 من 3 عشان نعتبره صف العناوين
+            return r
+    return None
+
+def read_sheet_with_detected_header(xlsx_path: Path, sheet_name: str) -> pd.DataFrame | None:
+    raw = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=None)
+    header_row = detect_header_row(raw)
+    if header_row is None:
+        return None
+
+    df = pd.read_excel(xlsx_path, sheet_name=sheet_name, header=header_row)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    # إزالة الأعمدة الفارغة/Unnamed
+    df = df.loc[:, ~df.columns.astype(str).str.contains("^Unnamed", case=False, regex=True)]
+    return df
+
 def load_students_df() -> pd.DataFrame:
-    """
-    يقرأ students.xlsx ويختار الشيت الصحيح تلقائياً:
-    يبحث عن شيت يحتوي (رقم المتدرب + رقم الجوال + اسم المتدرب).
-    """
     if not STUDENTS_XLSX.exists():
-        raise FileNotFoundError(f"ملف الطلاب غير موجود: {STUDENTS_XLSX}")
+        raise FileNotFoundError(f"ملف الطلاب غير موجود داخل data: {STUDENTS_XLSX}")
 
     xls = pd.ExcelFile(STUDENTS_XLSX)
+
+    # نبحث عن أفضل Sheet بعد إصلاح صف العناوين
     best_df = None
     best_score = -1
     best_sheet = None
 
-    # مرشحات أسماء الأعمدة
-    id_candidates = ["رقم المتدرب", "رقم_المتدرب", "StudentID", "ID"]
+    id_candidates = ["رقم المتدرب", "StudentID", "ID"]
     mobile_candidates = ["رقم الجوال", "الجوال", "Mobile", "Phone"]
-    name_candidates = ["اسم المتدرب", "اسم_المتدرب", "الاسم", "Name"]
-    spec_candidates = ["التخصص", "تخصص", "برنامج", "البرنامج", "Specialty", "Major", "Program"]
-    entity_candidates = ["جهة التدريب", "الجهة", "جهة", "TrainingEntity", "Entity", "Company"]
+    name_candidates = ["اسم المتدرب", "الاسم", "Name"]
+    spec_candidates = ["التخصص", "برنامج", "Specialty", "Major", "Program"]
+    entity_candidates = ["جهة التدريب", "الجهة", "TrainingEntity", "Entity", "Company"]
 
     for sheet in xls.sheet_names:
-        try:
-            df = pd.read_excel(STUDENTS_XLSX, sheet_name=sheet)
-            df.columns = [str(c).strip() for c in df.columns]
-            cols_norm = {norm_key(c) for c in df.columns}
-
-            score = 0
-            # كل واحد موجود يزيد نقاط
-            def has_any(cands):
-                for cc in cands:
-                    if norm_key(cc) in cols_norm:
-                        return True
-                    # فحص جزئي
-                    for real in df.columns:
-                        if norm_key(cc) in norm_key(real):
-                            return True
-                return False
-
-            if has_any(id_candidates): score += 3
-            if has_any(mobile_candidates): score += 3
-            if has_any(name_candidates): score += 3
-            if has_any(spec_candidates): score += 1
-            if has_any(entity_candidates): score += 1
-
-            if score > best_score:
-                best_score = score
-                best_df = df
-                best_sheet = sheet
-
-        except Exception:
+        df = read_sheet_with_detected_header(STUDENTS_XLSX, sheet)
+        if df is None or df.empty:
             continue
 
-    if best_df is None:
-        raise RuntimeError("لم أستطع قراءة أي Sheet من ملف الطلاب.")
+        cols_norm = {norm_key(c) for c in df.columns}
 
-    # إذا كان أفضل شيت نقاطه ضعيفة، غالباً الشيت غلط
+        def has_any(cands):
+            for cc in cands:
+                if norm_key(cc) in cols_norm:
+                    return True
+                for real in df.columns:
+                    if norm_key(cc) in norm_key(real):
+                        return True
+            return False
+
+        score = 0
+        if has_any(id_candidates): score += 3
+        if has_any(mobile_candidates): score += 3
+        if has_any(name_candidates): score += 3
+        if has_any(spec_candidates): score += 1
+        if has_any(entity_candidates): score += 1
+
+        if score > best_score:
+            best_score = score
+            best_df = df
+            best_sheet = sheet
+
+    if best_df is None:
+        raise RuntimeError("لم أستطع العثور على أي Sheet يحتوي جدول الطلاب بعناوين (رقم المتدرب/اسم المتدرب/رقم الجوال).")
+
     if best_score < 7:
         raise RuntimeError(
             f"تم العثور على Sheet لكن لا يحتوي الأعمدة المطلوبة.\n"
@@ -133,36 +157,23 @@ def load_students_df() -> pd.DataFrame:
 # Slots logic (فرص حسب التخصص)
 # =========================
 def calculate_slots_from_excel() -> dict:
-    """
-    يحسب الفرص المتاحة لكل تخصص من ملف students.xlsx:
-    - يحدد التخصص (التخصص أو برنامج)
-    - يحدد جهة التدريب
-    - الفرص = عدد تكرار كل جهة داخل نفس التخصص
-    """
     df = load_students_df()
 
-    col_id = find_col(df, ["رقم المتدرب", "StudentID", "ID"])
+    col_training = find_col(df, ["رقم المتدرب", "StudentID", "ID"])
     col_mobile = find_col(df, ["رقم الجوال", "الجوال", "Mobile", "Phone"])
     col_name = find_col(df, ["اسم المتدرب", "الاسم", "Name"])
 
-    # تخصص/برنامج
     try:
         col_spec = find_col(df, ["التخصص", "تخصص", "برنامج", "البرنامج", "Specialty", "Major", "Program"])
     except Exception:
         col_spec = "__ALL__"
         df[col_spec] = "عام"
 
-    # جهة التدريب
-    try:
-        col_entity = find_col(df, ["جهة التدريب", "الجهة", "جهة", "TrainingEntity", "Entity", "Company"])
-    except Exception:
-        # إذا لم توجد جهة تدريب، لا يمكن حساب فرص
-        raise KeyError("لا يوجد عمود 'جهة التدريب' في ملف الطلاب. لا يمكن حساب الفرص.")
+    col_entity = find_col(df, ["جهة التدريب", "الجهة", "جهة", "TrainingEntity", "Entity", "Company"])
 
     df[col_spec] = df[col_spec].astype(str).str.strip()
     df[col_entity] = df[col_entity].astype(str).str.strip()
 
-    # إزالة الصفوف الفارغة
     df = df[(df[col_entity].notna()) & (df[col_entity] != "") & (df[col_spec].notna()) & (df[col_spec] != "")]
 
     slots = {}
@@ -173,13 +184,9 @@ def calculate_slots_from_excel() -> dict:
     return slots
 
 def load_slots_by_specialty() -> dict:
-    """
-    يقرأ slots_by_specialty.json إن وجد، وإلا يحسبه من excel.
-    """
     if SLOTS_FILE.exists():
         with open(SLOTS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-
     slots = calculate_slots_from_excel()
     save_slots_by_specialty(slots)
     return slots
@@ -193,7 +200,7 @@ def specialty_total_remaining(slots: dict, specialty: str) -> int:
     return sum(int(v) for v in spec_slots.values() if int(v) > 0)
 
 # =========================
-# DOCX placeholders -> PDF
+# DOCX -> PDF
 # =========================
 def _replace_in_paragraph(paragraph, mapping: dict[str, str]) -> None:
     full_text = "".join(run.text for run in paragraph.runs)
@@ -241,27 +248,21 @@ def render_docx_to_pdf(template_path: Path, out_pdf_path: Path, mapping: dict[st
         str(tmp_docx),
     ]
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
     if result.returncode != 0:
-        raise RuntimeError(
-            "فشل تحويل DOCX إلى PDF عبر LibreOffice.\n"
-            f"STDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}"
-        )
+        raise RuntimeError(f"فشل التحويل إلى PDF.\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}")
 
     produced_pdf = OUT_DIR / (tmp_docx.stem + ".pdf")
     if not produced_pdf.exists():
-        raise FileNotFoundError("تم تشغيل التحويل لكن ملف PDF لم يُنتج.")
+        raise FileNotFoundError("لم يتم إنتاج ملف PDF.")
 
     produced_pdf.replace(out_pdf_path)
-
     try:
-        if tmp_docx.exists():
-            tmp_docx.unlink()
+        tmp_docx.unlink(missing_ok=True)  # Python 3.11
     except Exception:
         pass
 
 # =========================
-# HTML Templates (مع هيدر بدون قص)
+# HTML (الهيدر بدون قص)
 # =========================
 LOGIN_PAGE = """
 <!doctype html>
@@ -273,7 +274,7 @@ LOGIN_PAGE = """
 body{font-family:Arial;background:#f4f4f4;margin:0}
 .top-image{
   width:100%;
-  height:25vh;            /* ربع الشاشة */
+  height:25vh;
   background:#fff;
   display:flex;
   align-items:center;
@@ -285,7 +286,7 @@ body{font-family:Arial;background:#f4f4f4;margin:0}
   max-width:100%;
   width:auto;
   height:auto;
-  object-fit:contain;     /* يمنع القص */
+  object-fit:contain; /* يمنع القص */
   display:block;
 }
 .container{
@@ -548,9 +549,6 @@ def select():
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    """
-    يولد PDF ويخصم فرصة من الجهة داخل نفس التخصص.
-    """
     try:
         name = (request.form.get("name") or "").strip()
         specialty = (request.form.get("specialty") or "").strip()
@@ -569,13 +567,9 @@ def generate():
         if int(slots[specialty].get(entity, 0)) <= 0:
             return "هذه الجهة لم تعد متاحة.", 400
 
-        # خصم فرصة
         slots[specialty][entity] = int(slots[specialty][entity]) - 1
-
-        # إذا انتهت تماماً، نتركها صفر (ستختفي من الاختيار)
         save_slots_by_specialty(slots)
 
-        # بيانات القالب
         now_str = datetime.now().strftime("%Y-%m-%d")
         mapping = {
             "{{NAME}}": name,
@@ -600,9 +594,6 @@ def generate():
 
 @app.route("/slots", methods=["GET"])
 def slots_view():
-    """
-    يعرض كل تخصص وإجمالي الفرص المتبقية له.
-    """
     try:
         slots = load_slots_by_specialty()
         rows = []
@@ -614,10 +605,6 @@ def slots_view():
 
 @app.route("/recalc", methods=["GET"])
 def recalc():
-    """
-    يعيد حساب الفرص من ملف الإكسل ويستبدل slots_by_specialty.json.
-    استخدمه بعد ما تعدّل ملف students.xlsx
-    """
     try:
         slots = calculate_slots_from_excel()
         save_slots_by_specialty(slots)
@@ -625,9 +612,6 @@ def recalc():
     except Exception as e:
         return f"فشل إعادة الحساب:\n{e}", 500
 
-# =========================
-# Run
-# =========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
