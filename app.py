@@ -1,662 +1,715 @@
 import os
-import re
 import json
-import uuid
-import shutil
-import subprocess
 from datetime import datetime
 from pathlib import Path
+import subprocess
 
 import pandas as pd
 from flask import (
-    Flask,
-    request,
-    redirect,
-    url_for,
-    send_file,
-    render_template_string,
-    session,
+    Flask, request, redirect, url_for,
+    render_template_string, send_file, abort
 )
+from docx import Document
 
-# =========================
-# إعدادات عامة
-# =========================
 APP_TITLE = "بوابة خطاب التوجيه - التدريب التعاوني"
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 STATIC_DIR = BASE_DIR / "static"
 
-DATA_FILE = DATA_DIR / "students.xlsx"
-TEMPLATE_FILE = DATA_DIR / "letter_template.docx"
+# ملفات البيانات
+STUDENTS_CANDIDATES = [
+    DATA_DIR / "students.xlsx",
+    DATA_DIR / "students.xls",
+    BASE_DIR / "students.xlsx",
+    BASE_DIR / "students.xls",
+]
 
-ASSIGNMENTS_FILE = DATA_DIR / "assignments.json"  # اختيارات المتدربين
+ASSIGNMENTS_FILE = DATA_DIR / "assignments.json"
+SLOTS_CACHE_FILE = DATA_DIR / "slots_cache.json"
 
-# =========================
-# Flask App
-# =========================
-app = Flask(__name__, static_folder=str(STATIC_DIR))
-app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
+LETTER_TEMPLATE = DATA_DIR / "letter_template.docx"
+
+# أسماء الأعمدة الموجودة في ملفك (حسب الملف المرفق)
+# ملاحظة: عمود "جهة التدريب " فيه مسافة في النهاية داخل الإكسل، سنقوم بتنظيفه تلقائيًا
+COL_TRAINEE_ID = "رقم المتدرب"
+COL_TRAINEE_NAME = "إسم المتدرب"
+COL_PHONE = "رقم الجوال"
+COL_PROGRAM = "برنامج"
+COL_SPECIALTY = "التخصص"
+COL_ENTITY = "جهة التدريب"
+COL_DEPT = "القسم"
+COL_TRAINER = "المدرب"
+COL_COURSE = "اسم المقرر"
+COL_REF = "الرقم المرجعي"
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 
-# =========================
-# أدوات مساعدة
-# =========================
-def _safe_mkdir(p: Path) -> None:
-    p.mkdir(parents=True, exist_ok=True)
-
-
-def _load_json(path: Path, default):
+# -----------------------
+# Helpers: JSON
+# -----------------------
+def _read_json(path: Path, default):
     try:
         if path.exists():
-            with path.open("r", encoding="utf-8") as f:
-                return json.load(f)
+            return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         pass
     return default
 
 
-def _save_json_atomic(path: Path, obj) -> None:
-    _safe_mkdir(path.parent)
-    tmp = path.with_suffix(".tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    tmp.replace(path)
+def _write_json(path: Path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def normalize_digits(s: str) -> str:
-    """يحافظ على الأرقام فقط."""
-    if s is None:
-        return ""
-    s = str(s).strip()
-    return re.sub(r"\D+", "", s)
-
-
-def last4_phone(v) -> str:
-    d = normalize_digits(v)
-    return d[-4:] if len(d) >= 4 else d
+# -----------------------
+# Helpers: Excel load
+# -----------------------
+def find_students_file() -> Path:
+    for p in STUDENTS_CANDIDATES:
+        if p.exists():
+            return p
+    raise FileNotFoundError(
+        "لم يتم العثور على ملف الطلاب students.xlsx. "
+        "ضعه داخل مجلد data باسم students.xlsx"
+    )
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # إزالة الفراغات من أسماء الأعمدة (مهم لأن عندك "جهة التدريب " فيها مسافة)
+    # تنظيف أسماء الأعمدة: إزالة مسافات البداية/النهاية وتوحيد بعض الفروقات
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
+
+    # أحيانًا يظهر "اسم المتدرب" بدون همزة أو بصيغة مختلفة:
+    # سنوحد إلى "إسم المتدرب" لو موجود بديل
+    col_map = {}
+    for c in df.columns:
+        if c.strip() in ["اسم المتدرب", "إسم المتدرب", "اسم_المتدرب", "إسم_المتدرب"]:
+            col_map[c] = COL_TRAINEE_NAME
+        if c.strip() in ["جهة التدريب", "جهة التدريب "]:
+            col_map[c] = COL_ENTITY
+
+    if col_map:
+        df = df.rename(columns=col_map)
+
     return df
 
 
-def required_columns_present(df: pd.DataFrame) -> (bool, str):
+def load_students_df() -> pd.DataFrame:
+    students_file = find_students_file()
+    df = pd.read_excel(students_file)
+    df = normalize_columns(df)
+
+    # تحقق من الأعمدة المطلوبة
     required = [
-        "رقم المتدرب",
-        "رقم الجوال",
-        "إسم المتدرب",
-        "التخصص",
-        "برنامج",
-        "جهة التدريب",
+        COL_TRAINEE_ID, COL_TRAINEE_NAME, COL_PHONE,
+        COL_PROGRAM, COL_SPECIALTY, COL_ENTITY
     ]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        return False, f"الأعمدة الناقصة في ملف الإكسل: {missing}\nالأعمدة الموجودة: {list(df.columns)}"
-    return True, ""
+        raise KeyError(
+            f"لم يتم العثور على الأعمدة المطلوبة: {missing} | "
+            f"الأعمدة الموجودة: {list(df.columns)}"
+        )
 
+    # تنظيف القيم
+    df[COL_TRAINEE_ID] = df[COL_TRAINEE_ID].astype(str).str.strip()
+    df[COL_PHONE] = df[COL_PHONE].astype(str).str.strip()
+    df[COL_PROGRAM] = df[COL_PROGRAM].astype(str).str.strip()
+    df[COL_SPECIALTY] = df[COL_SPECIALTY].astype(str).str.strip()
+    df[COL_ENTITY] = df[COL_ENTITY].astype(str).str.strip()
+    df[COL_TRAINEE_NAME] = df[COL_TRAINEE_NAME].astype(str).str.strip()
 
-def load_students() -> pd.DataFrame:
-    if not DATA_FILE.exists():
-        raise FileNotFoundError(f"الملف غير موجود: {DATA_FILE}")
-
-    df = pd.read_excel(DATA_FILE)  # يحتاج openpyxl في requirements
-    df = normalize_columns(df)
-
-    ok, msg = required_columns_present(df)
-    if not ok:
-        raise ValueError(msg)
-
-    # تجهيز حقول مطابقة الدخول
-    df["رقم المتدرب"] = df["رقم المتدرب"].apply(normalize_digits)
-    df["رقم الجوال"] = df["رقم الجوال"].apply(normalize_digits)
-    df["اخر4"] = df["رقم الجوال"].apply(lambda x: x[-4:] if len(x) >= 4 else x)
-
-    # تنظيف جهة التدريب
-    df["جهة التدريب"] = df["جهة التدريب"].astype(str).str.strip()
+    # قد يكون رقم الجوال بصيغة علمية/عشرية أحيانًا
+    df[COL_PHONE] = df[COL_PHONE].str.replace(r"\.0$", "", regex=True)
 
     return df
 
 
-def capacity_by_specialty(df: pd.DataFrame) -> dict:
+def last4(phone: str) -> str:
+    digits = "".join([ch for ch in str(phone) if ch.isdigit()])
+    return digits[-4:] if len(digits) >= 4 else digits
+
+
+# -----------------------
+# فرص التدريب (Slots)
+# -----------------------
+def build_slots_from_excel(df: pd.DataFrame) -> dict:
     """
-    يحسب الفرص من ملف الاكسل:
-    كل جهة تدريبية مكررة داخل نفس التخصص = عدد فرص.
+    يبني قاموس الفرص حسب (التخصص -> الجهة -> العدد)
+    والعدد = عدد تكرار الجهة داخل تخصص/برنامج المتدرب في ملف الإكسل.
     """
-    grp = (
-        df.groupby(["التخصص", "جهة التدريب"])
-        .size()
-        .reset_index(name="count")
-    )
-    cap = {}
-    for _, row in grp.iterrows():
-        spec = str(row["التخصص"]).strip()
-        ent = str(row["جهة التدريب"]).strip()
-        cap.setdefault(spec, {})[ent] = int(row["count"])
-    return cap
+    slots = {}
+    for _, row in df.iterrows():
+        spec = (row.get(COL_SPECIALTY, "") or "").strip()
+        prog = (row.get(COL_PROGRAM, "") or "").strip()
+        key = spec if spec else prog  # نعتمد التخصص أولاً، وإن كان فاضي نستخدم البرنامج
+        entity = (row.get(COL_ENTITY, "") or "").strip()
 
-
-def load_assignments() -> dict:
-    return _load_json(ASSIGNMENTS_FILE, {})
-
-
-def remaining_options_for_student(df: pd.DataFrame, trainee_id: str) -> dict:
-    """
-    يرجع:
-    - student row
-    - options list (جهات متاحة ضمن تخصصه مع العدد المتبقي)
-    - remaining_map
-    """
-    trainee_id = normalize_digits(trainee_id)
-    row = df[df["رقم المتدرب"] == trainee_id]
-    if row.empty:
-        return None, [], {}
-
-    student = row.iloc[0].to_dict()
-    spec = str(student["التخصص"]).strip()
-
-    cap = capacity_by_specialty(df)
-    spec_cap = cap.get(spec, {})
-
-    assignments = load_assignments()
-
-    # حساب الاستهلاك داخل نفس التخصص
-    used = {}
-    for tid, rec in assignments.items():
-        try:
-            if str(rec.get("التخصص", "")).strip() != spec:
-                continue
-            ent = str(rec.get("جهة التدريب", "")).strip()
-            if ent:
-                used[ent] = used.get(ent, 0) + 1
-        except Exception:
+        if not key or not entity:
             continue
 
-    remaining = {}
-    for ent, cnt in spec_cap.items():
-        remaining[ent] = max(0, int(cnt) - int(used.get(ent, 0)))
+        slots.setdefault(key, {})
+        slots[key][entity] = slots[key].get(entity, 0) + 1
 
-    # الخيارات المتاحة (المتبقي > 0)
-    options = [(ent, remaining[ent]) for ent in remaining if remaining[ent] > 0]
-    options.sort(key=lambda x: (-x[1], x[0]))
-
-    return student, options, remaining
+    return slots
 
 
-def ensure_logged_in():
-    tid = session.get("tid")
-    if not tid:
-        return None
-    return normalize_digits(tid)
+def get_slots_cache(force_rebuild: bool = False) -> dict:
+    df = load_students_df()
+
+    if (not force_rebuild) and SLOTS_CACHE_FILE.exists():
+        cached = _read_json(SLOTS_CACHE_FILE, {})
+        if cached:
+            return cached
+
+    slots = build_slots_from_excel(df)
+    _write_json(SLOTS_CACHE_FILE, slots)
+    return slots
 
 
-# =========================
-# HTML (واجهة)
-# =========================
-BASE_CSS = """
-<style>
-  body{
-    font-family: Arial, sans-serif;
-    background:#f7f7f7;
-    margin:0;
-    direction:rtl;
-  }
-  .top-image{
-    width:100%;
-    height:25vh;            /* ربع الصفحة */
-    overflow:hidden;
-    background:#fff;
-  }
-  .top-image img{
-    width:100%;
-    height:100%;
-    object-fit:contain;     /* يمنع القص */
-    display:block;
-  }
-  .wrap{
-    max-width:1000px;
-    margin: 24px auto;
-    padding: 0 16px;
-  }
-  .card{
-    background:#fff;
-    border-radius:18px;
-    box-shadow: 0 8px 25px rgba(0,0,0,.08);
-    padding: 28px;
-  }
-  h1{
-    margin:0 0 8px 0;
-    font-size:44px;
-    text-align:center;
-    font-weight:800;
-  }
-  .subtitle{
-    text-align:center;
-    color:#555;
-    margin-bottom:18px;
-  }
-  .row{
-    display:flex;
-    gap:16px;
-    flex-wrap:wrap;
-    margin-top:18px;
-  }
-  .col{
-    flex: 1 1 320px;
-  }
-  label{
-    font-weight:700;
-    display:block;
-    margin-bottom:8px;
-  }
-  input, select{
-    width:100%;
-    padding:14px 16px;
-    border-radius:14px;
-    border:1px solid #ddd;
-    font-size:18px;
-    outline:none;
-  }
-  .btn{
-    width:100%;
-    margin-top:16px;
-    padding:18px 16px;
-    border-radius:18px;
-    border:none;
-    background:#0b1630;
-    color:#fff;
-    font-size:20px;
-    cursor:pointer;
-    font-weight:700;
-  }
-  .msg{
-    margin-top:14px;
-    text-align:center;
-  }
-  .err{ color:#c00; font-weight:700; }
-  .ok{ color:#0a7; font-weight:700; }
-  .pill{
-    display:inline-block;
-    background:#eef3ff;
-    padding:10px 14px;
-    border-radius:999px;
-    font-weight:700;
-    margin: 6px 6px;
-  }
-  .small{
-    color:#666;
-    font-size:14px;
-    margin-top:8px;
-  }
-  a{
-    color:#0b1630;
-    font-weight:700;
-  }
-</style>
-"""
-
-LOGIN_PAGE = """
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8">
-  <title>{{title}}</title>
-  """ + BASE_CSS + """
-</head>
-<body>
-  <div class="top-image">
-    <img src="/static/header.jpg" alt="Header">
-  </div>
-
-  <div class="wrap">
-    <div class="card">
-      <h1>{{title}}</h1>
-      <div class="subtitle">يرجى تسجيل الدخول بالرقم التدريبي وآخر 4 أرقام من رقم الجوال.</div>
-
-      <form method="POST" action="/">
-        <div class="row">
-          <div class="col">
-            <label>الرقم التدريبي</label>
-            <input name="tid" placeholder="مثال: 444229747" required>
-          </div>
-          <div class="col">
-            <label>آخر 4 أرقام من الجوال</label>
-            <input name="last4" placeholder="مثال: 6101" required>
-          </div>
-        </div>
-
-        <button class="btn" type="submit">دخول</button>
-
-        {% if msg %}
-          <div class="msg {{'err' if is_err else 'ok'}}">{{msg}}</div>
-        {% endif %}
-
-        <div class="small">
-          ملاحظة: يتم قراءة ملف الطلاب من <b>data/students.xlsx</b>
-        </div>
-      </form>
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-SELECT_PAGE = """
-<!doctype html>
-<html lang="ar" dir="rtl">
-<head>
-  <meta charset="utf-8">
-  <title>{{title}}</title>
-  """ + BASE_CSS + """
-</head>
-<body>
-  <div class="top-image">
-    <img src="/static/header.jpg" alt="Header">
-  </div>
-
-  <div class="wrap">
-    <div class="card">
-      <h1>{{title}}</h1>
-      <div class="subtitle">اختر جهة التدريب المتاحة لتخصصك ثم اطبع خطاب التوجيه.</div>
-
-      <div style="text-align:center;margin-top:8px">
-        <span class="pill">المتدرب: {{name}}</span>
-        <span class="pill">رقم المتدرب: {{tid}}</span>
-        <span class="pill">التخصص: {{spec}}</span>
-        <span class="pill">البرنامج: {{program}}</span>
-      </div>
-
-      <hr style="margin:18px 0;border:none;border-top:1px solid #eee;">
-
-      {% if already %}
-        <div class="msg ok">
-          تم تسجيل اختيارك مسبقًا:
-          <b>{{chosen}}</b>
-        </div>
-
-        <div class="msg" style="margin-top:10px">
-          <a href="/letter">تحميل/طباعة خطاب التوجيه (PDF أو Word)</a>
-        </div>
-
-      {% else %}
-        <form method="POST" action="/select">
-          <div class="row">
-            <div class="col">
-              <label>جهة التدريب المتاحة (حسب تخصصك)</label>
-              <select name="entity" required>
-                <option value="">اختر الجهة...</option>
-                {% for ent, rem in options %}
-                  <option value="{{ent}}">{{ent}} (متبقي: {{rem}})</option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
-
-          <button class="btn" type="submit">حفظ الاختيار</button>
-
-          {% if msg %}
-            <div class="msg {{'err' if is_err else 'ok'}}">{{msg}}</div>
-          {% endif %}
-        </form>
-
-        <div class="small" style="text-align:center;margin-top:10px">
-          ملاحظة: يتم احتساب الفرص من تكرار <b>جهة التدريب</b> داخل نفس <b>التخصص</b> في ملف الإكسل،
-          وتتناقص تلقائيًا مع كل اختيار.
-        </div>
-      {% endif %}
-
-      {% if remaining_summary %}
-        <hr style="margin:18px 0;border:none;border-top:1px solid #eee;">
-        <div style="font-weight:800;margin-bottom:8px">ملخص الفرص المتبقية داخل تخصصك:</div>
-        <ul>
-          {% for ent, rem in remaining_summary %}
-            <li>{{ent}} : {{rem}} فرصة</li>
-          {% endfor %}
-        </ul>
-      {% endif %}
-    </div>
-  </div>
-</body>
-</html>
-"""
-
-
-# =========================
-# Routes
-# =========================
-@app.route("/", methods=["GET", "POST"])
-def home():
-    msg = ""
-    is_err = False
-
-    try:
-        df = load_students()
-    except Exception as e:
-        return render_template_string(
-            LOGIN_PAGE,
-            title=APP_TITLE,
-            msg=f"حدث خطأ أثناء التحميل/التحقق: {e}",
-            is_err=True
-        )
-
-    if request.method == "POST":
-        tid = normalize_digits(request.form.get("tid", ""))
-        last4 = normalize_digits(request.form.get("last4", ""))
-
-        row = df[df["رقم المتدرب"] == tid]
-        if row.empty:
-            msg = "بيانات الدخول غير صحيحة: الرقم التدريبي غير موجود."
-            is_err = True
-        else:
-            phone_last4 = str(row.iloc[0]["اخر4"])
-            if phone_last4 != last4:
-                msg = "بيانات الدخول غير صحيحة: تأكد من آخر 4 أرقام من الجوال."
-                is_err = True
-            else:
-                session["tid"] = tid
-                return redirect(url_for("select"))
-
-    return render_template_string(LOGIN_PAGE, title=APP_TITLE, msg=msg, is_err=is_err)
-
-
-@app.route("/select", methods=["GET", "POST"])
-def select():
-    tid = ensure_logged_in()
-    if not tid:
-        return redirect(url_for("home"))
-
-    try:
-        df = load_students()
-    except Exception as e:
-        return f"خطأ في قراءة ملف الطلاب: {e}", 500
-
-    assignments = load_assignments()
-    if tid in assignments:
-        rec = assignments[tid]
-        return render_template_string(
-            SELECT_PAGE,
-            title=APP_TITLE,
-            name=rec.get("إسم المتدرب", ""),
-            tid=tid,
-            spec=rec.get("التخصص", ""),
-            program=rec.get("برنامج", ""),
-            already=True,
-            chosen=rec.get("جهة التدريب", ""),
-            options=[],
-            msg="",
-            is_err=False,
-            remaining_summary=[]
-        )
-
-    student, options, remaining = remaining_options_for_student(df, tid)
-    if not student:
-        return redirect(url_for("home"))
-
-    msg = ""
-    is_err = False
-
-    if request.method == "POST":
-        chosen = (request.form.get("entity") or "").strip()
-        if not chosen:
-            msg = "اختر جهة تدريب أولاً."
-            is_err = True
-        else:
-            # إعادة فحص التوفر لحظة الحفظ (حماية من تعارض)
-            _, options_now, remaining_now = remaining_options_for_student(df, tid)
-            rem = remaining_now.get(chosen, 0)
-            if rem <= 0:
-                msg = "عذرًا، هذه الجهة لم تعد متاحة الآن. اختر جهة أخرى."
-                is_err = True
-                options = options_now
-                remaining = remaining_now
-            else:
-                assignments[tid] = {
-                    "رقم المتدرب": tid,
-                    "إسم المتدرب": str(student.get("إسم المتدرب", "")).strip(),
-                    "التخصص": str(student.get("التخصص", "")).strip(),
-                    "برنامج": str(student.get("برنامج", "")).strip(),
-                    "رقم الجوال": str(student.get("رقم الجوال", "")).strip(),
-                    "جهة التدريب": chosen,
-                    "ts": datetime.utcnow().isoformat()
-                }
-                _save_json_atomic(ASSIGNMENTS_FILE, assignments)
-                return redirect(url_for("select"))
-
-    # ملخص متبقي (داخل التخصص فقط)
-    remaining_summary = [(k, v) for k, v in remaining.items()]
-    remaining_summary.sort(key=lambda x: (-x[1], x[0]))
-
-    return render_template_string(
-        SELECT_PAGE,
-        title=APP_TITLE,
-        name=str(student.get("إسم المتدرب", "")).strip(),
-        tid=tid,
-        spec=str(student.get("التخصص", "")).strip(),
-        program=str(student.get("برنامج", "")).strip(),
-        already=False,
-        chosen="",
-        options=options,
-        msg=msg,
-        is_err=is_err,
-        remaining_summary=remaining_summary[:30],  # اختصار العرض
-    )
-
-
-def _replace_text_in_docx(doc, mapping: dict):
+def get_assignments() -> dict:
     """
-    استبدال نصوص بسيطة داخل docx (paragraphs + tables).
-    ضع في القالب نصوص مثل: {{NAME}} {{ENTITY}} ... إلخ
+    assignments format:
+    {
+      "444229747": {
+         "entity": "...",
+         "specialty_key": "...",
+         "ts": "2026-02-22T..."
+      },
+      ...
+    }
     """
-    # الفقرات
+    return _read_json(ASSIGNMENTS_FILE, {})
+
+
+def remaining_slots_for_key(slots: dict, specialty_key: str, assignments: dict) -> dict:
+    """
+    يرجّع المتبقي من الفرص للـ specialty_key بعد خصم اختيارات المتدربين.
+    """
+    base = dict(slots.get(specialty_key, {}))
+    # خصم حسب assignments
+    for tid, info in assignments.items():
+        if info.get("specialty_key") != specialty_key:
+            continue
+        ent = info.get("entity")
+        if ent in base:
+            base[ent] = max(0, int(base[ent]) - 1)
+    # حذف الجهات التي انتهت فرصها
+    base = {k: v for k, v in base.items() if int(v) > 0}
+    return base
+
+
+# -----------------------
+# DOCX placeholders replace
+# -----------------------
+def replace_in_docx(doc: Document, mapping: dict):
+    # replace in paragraphs
     for p in doc.paragraphs:
         for k, v in mapping.items():
             if k in p.text:
-                for r in p.runs:
-                    r.text = r.text.replace(k, v)
+                # بديل سريع: نجمع runs ونبدل ثم نعيد كتابته كنص واحد
+                full = "".join(run.text for run in p.runs)
+                full = full.replace(k, str(v))
+                for run in p.runs:
+                    run.text = ""
+                if p.runs:
+                    p.runs[0].text = full
+                else:
+                    p.add_run(full)
 
-    # الجداول
+    # replace in tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
                     for k, v in mapping.items():
                         if k in p.text:
-                            for r in p.runs:
-                                r.text = r.text.replace(k, v)
+                            full = "".join(run.text for run in p.runs)
+                            full = full.replace(k, str(v))
+                            for run in p.runs:
+                                run.text = ""
+                            if p.runs:
+                                p.runs[0].text = full
+                            else:
+                                p.add_run(full)
 
 
-def _find_office_exe():
-    for exe in ["soffice", "libreoffice"]:
-        if shutil.which(exe):
-            return exe
-    return None
+def convert_docx_to_pdf(docx_path: Path, out_dir: Path) -> Path:
+    """
+    يحاول التحويل عبر libreoffice (soffice).
+    إذا لم يتوفر، يرفع خطأ واضح.
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "soffice",
+        "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(out_dir),
+        str(docx_path),
+    ]
+    subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    pdf_path = out_dir / (docx_path.stem + ".pdf")
+    if not pdf_path.exists():
+        raise FileNotFoundError("فشل إنشاء PDF بعد التحويل.")
+    return pdf_path
 
 
-@app.route("/letter", methods=["GET"])
-def letter():
-    tid = ensure_logged_in()
-    if not tid:
-        return redirect(url_for("home"))
+# -----------------------
+# UI Templates
+# -----------------------
+BASE_CSS = """
+<style>
+  :root { --main:#0b1a34; --card:#ffffff; --bg:#f5f7fb; }
+  body{
+    margin:0; font-family: Arial, sans-serif; background: var(--bg);
+    direction: rtl;
+  }
+  .top-image{
+    width:100%;
+    height:25vh;          /* ربع الصفحة تقريبًا */
+    min-height:180px;
+    max-height:320px;
+    overflow:hidden;
+    background:#eee;
+  }
+  .top-image img{
+    width:100%;
+    height:100%;
+    object-fit:cover;      /* يمنع قصّ غريب */
+    object-position:center;
+    display:block;
+  }
+  .wrap{
+    max-width:1100px;
+    margin:-40px auto 60px auto;
+    padding: 0 16px;
+  }
+  .card{
+    background: var(--card);
+    border-radius: 22px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.08);
+    padding: 28px;
+  }
+  h1{
+    margin:0 0 8px 0;
+    font-size: 44px;
+    text-align:center;
+    font-weight: 800;
+  }
+  .sub{
+    text-align:center;
+    margin: 0 0 18px 0;
+    color:#2b2b2b;
+    font-size: 18px;
+  }
+  .row{
+    display:flex;
+    gap:16px;
+    flex-wrap:wrap;
+    justify-content:space-between;
+    margin-top: 18px;
+  }
+  .field{
+    flex: 1 1 300px;
+  }
+  label{
+    display:block;
+    font-weight:700;
+    margin-bottom: 8px;
+  }
+  input, select{
+    width:100%;
+    padding:16px 14px;
+    border-radius: 14px;
+    border:1px solid #ddd;
+    font-size: 18px;
+    outline:none;
+    background:#fff;
+  }
+  .btn{
+    margin-top:18px;
+    width:100%;
+    padding:18px 16px;
+    border:0;
+    border-radius: 18px;
+    background: var(--main);
+    color:#fff;
+    font-size: 20px;
+    font-weight:700;
+    cursor:pointer;
+  }
+  .error{
+    color:#c40000;
+    margin-top: 14px;
+    font-weight:700;
+    text-align:center;
+  }
+  .note{
+    margin-top: 10px;
+    color:#666;
+    text-align:center;
+  }
+  .pill{
+    display:inline-block;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background:#eef3ff;
+    margin: 6px;
+    font-weight:700;
+  }
+  .list{
+    margin-top: 16px;
+    line-height: 2;
+  }
+  .linkbtn{
+    display:inline-block;
+    margin-top: 10px;
+    font-weight:800;
+    text-decoration: underline;
+  }
+</style>
+"""
 
-    assignments = load_assignments()
-    if tid not in assignments:
-        return redirect(url_for("select"))
+LOGIN_HTML = """
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+  """ + BASE_CSS + """
+</head>
+<body>
+  <div class="top-image">
+    <img src="/static/header.jpg" alt="Header">
+  </div>
 
-    rec = assignments[tid]
+  <div class="wrap">
+    <div class="card">
+      <h1>{{title}}</h1>
+      <p class="sub">يرجى تسجيل الدخول بالرقم التدريبي وآخر 4 أرقام من رقم الجوال.</p>
 
-    if not TEMPLATE_FILE.exists():
-        return f"قالب الخطاب غير موجود: {TEMPLATE_FILE}", 500
+      <form method="post" action="{{ url_for('login') }}">
+        <div class="row">
+          <div class="field">
+            <label>الرقم التدريبي</label>
+            <input name="trainee_id" placeholder="مثال: 444229747" required>
+          </div>
+          <div class="field">
+            <label>آخر 4 أرقام من الجوال</label>
+            <input name="phone_last4" placeholder="مثال: 6101" required>
+          </div>
+        </div>
 
-    # إنشاء DOCX مخصص
-    from docx import Document  # python-docx
+        <button class="btn" type="submit">دخول</button>
+      </form>
 
-    tmp_dir = Path("/tmp") / f"letter_{uuid.uuid4().hex}"
-    _safe_mkdir(tmp_dir)
+      {% if error %}
+        <div class="error">{{error}}</div>
+      {% endif %}
 
-    out_docx = tmp_dir / f"letter_{tid}.docx"
-    out_pdf = tmp_dir / f"letter_{tid}.pdf"
+      <div class="note">ملاحظة: يتم قراءة بيانات الطلاب من <b>data/students.xlsx</b></div>
+    </div>
+  </div>
+</body>
+</html>
+"""
 
-    doc = Document(str(TEMPLATE_FILE))
+CHOOSE_HTML = """
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>{{title}}</title>
+  """ + BASE_CSS + """
+</head>
+<body>
+  <div class="top-image">
+    <img src="/static/header.jpg" alt="Header">
+  </div>
 
-    mapping = {
-        "{{NAME}}": str(rec.get("إسم المتدرب", "")).strip(),
-        "{{TID}}": str(rec.get("رقم المتدرب", "")).strip(),
-        "{{SPEC}}": str(rec.get("التخصص", "")).strip(),
-        "{{PROGRAM}}": str(rec.get("برنامج", "")).strip(),
-        "{{ENTITY}}": str(rec.get("جهة التدريب", "")).strip(),
-        "{{DATE}}": datetime.now().strftime("%Y-%m-%d"),
-    }
-    _replace_text_in_docx(doc, mapping)
-    doc.save(str(out_docx))
+  <div class="wrap">
+    <div class="card">
+      <h1>{{title}}</h1>
+      <p class="sub">اختر جهة التدريب المتاحة لتخصصك ثم احفظ الاختيار.</p>
 
-    # محاولة تحويل PDF إن توفر LibreOffice
-    office = _find_office_exe()
-    if office:
-        try:
-            subprocess.run(
-                [
-                    office,
-                    "--headless",
-                    "--nologo",
-                    "--nofirststartwizard",
-                    "--convert-to",
-                    "pdf",
-                    "--outdir",
-                    str(tmp_dir),
-                    str(out_docx),
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=120,
-            )
-            if out_pdf.exists():
-                return send_file(
-                    str(out_pdf),
-                    as_attachment=True,
-                    download_name=f"letter_{tid}.pdf",
-                    mimetype="application/pdf",
-                )
-        except Exception:
-            # لو فشل التحويل لأي سبب، نكمل ونرسل DOCX
-            pass
+      <div style="text-align:center; margin-top:10px;">
+        <span class="pill">المتدرب: {{ trainee_name }}</span>
+        <span class="pill">رقم المتدرب: {{ trainee_id }}</span>
+        <span class="pill">التخصص/البرنامج: {{ specialty_key }}</span>
+      </div>
 
-    # fallback: ارسال Word
-    return send_file(
-        str(out_docx),
-        as_attachment=True,
-        download_name=f"letter_{tid}.docx",
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      {% if already %}
+        <hr style="margin:18px 0;">
+        <div style="text-align:center; font-weight:800; font-size:18px;">
+          تم تسجيل اختيارك مسبقًا:
+        </div>
+        <div style="text-align:center; margin-top:8px; font-size:18px;">
+          الجهة المختارة: <b>{{ chosen_entity }}</b>
+        </div>
+        <div style="text-align:center;">
+          <a class="linkbtn" href="{{ url_for('letter', tid=trainee_id) }}">تحميل/طباعة خطاب التوجيه PDF</a>
+        </div>
+      {% else %}
+        <form method="post" action="{{ url_for('save_choice') }}">
+          <input type="hidden" name="trainee_id" value="{{ trainee_id }}">
+
+          <div class="row" style="margin-top:18px;">
+            <div class="field">
+              <label>جهة التدريب المتاحة</label>
+              <select name="entity" required>
+                <option value="">اختر الجهة...</option>
+                {% for ent, cnt in options %}
+                  <option value="{{ent}}">{{ent}} (متبقي: {{cnt}})</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          <button class="btn" type="submit">حفظ الاختيار</button>
+        </form>
+
+        {% if message %}
+          <div class="error">{{message}}</div>
+        {% endif %}
+      {% endif %}
+
+      <hr style="margin:18px 0;">
+
+      <div style="font-weight:800; margin-bottom:8px;">ملخص الفرص المتبقية داخل تخصصك:</div>
+      <div class="list">
+        {% for ent, cnt in summary %}
+          • {{ent}} : <b>{{cnt}}</b> فرصة<br>
+        {% endfor %}
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+# -----------------------
+# Routes
+# -----------------------
+@app.get("/")
+def index():
+    # نعرض نفس صفحة الدخول
+    return render_template_string(LOGIN_HTML, title=APP_TITLE, error=None)
+
+
+@app.get("/login")
+def login_get():
+    return redirect(url_for("index"))
+
+
+@app.post("/")
+def login():
+    # نفس / (POST)
+    trainee_id = (request.form.get("trainee_id") or "").strip()
+    phone_last4 = (request.form.get("phone_last4") or "").strip()
+
+    try:
+        df = load_students_df()
+    except Exception as e:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error=f"خطأ في قراءة ملف الإكسل: {e}")
+
+    row = df[df[COL_TRAINEE_ID] == trainee_id]
+    if row.empty:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error="الرقم التدريبي غير موجود.")
+
+    r = row.iloc[0]
+    if last4(r[COL_PHONE]) != phone_last4:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error="بيانات الدخول غير صحيحة. تأكد من الرقم التدريبي وآخر 4 أرقام من الجوال.")
+
+    # نحدد مفتاح التخصص (التخصص ثم البرنامج)
+    specialty_key = (str(r.get(COL_SPECIALTY, "")) or "").strip()
+    if not specialty_key:
+        specialty_key = (str(r.get(COL_PROGRAM, "")) or "").strip()
+
+    trainee_name = str(r.get(COL_TRAINEE_NAME, "")).strip()
+
+    # اذهب لصفحة الاختيار
+    return redirect(url_for("choose", tid=trainee_id))
+
+
+@app.get("/choose/<tid>")
+def choose(tid):
+    try:
+        df = load_students_df()
+    except Exception as e:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error=f"خطأ في قراءة ملف الإكسل: {e}")
+
+    row = df[df[COL_TRAINEE_ID] == str(tid).strip()]
+    if row.empty:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error="الرقم التدريبي غير موجود.")
+
+    r = row.iloc[0]
+    trainee_id = str(r[COL_TRAINEE_ID]).strip()
+    trainee_name = str(r[COL_TRAINEE_NAME]).strip()
+    specialty_key = (str(r.get(COL_SPECIALTY, "")) or "").strip()
+    if not specialty_key:
+        specialty_key = (str(r.get(COL_PROGRAM, "")) or "").strip()
+
+    slots = get_slots_cache(force_rebuild=True)  # إعادة بناء للتأكد أنها مطابقة للإكسل الحالي
+    assignments = get_assignments()
+
+    # هل المتدرب اختار مسبقًا؟
+    already = trainee_id in assignments
+    chosen_entity = assignments.get(trainee_id, {}).get("entity") if already else None
+
+    remaining = remaining_slots_for_key(slots, specialty_key, assignments)
+
+    options = sorted(remaining.items(), key=lambda x: (-int(x[1]), x[0]))
+    summary = options[:50]  # عرض أول 50 جهة (لو كثيرة)
+
+    return render_template_string(
+        CHOOSE_HTML,
+        title=APP_TITLE,
+        trainee_id=trainee_id,
+        trainee_name=trainee_name,
+        specialty_key=specialty_key,
+        options=options,
+        summary=summary,
+        already=already,
+        chosen_entity=chosen_entity,
+        message=None,
     )
 
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("home"))
+@app.post("/save-choice")
+def save_choice():
+    trainee_id = (request.form.get("trainee_id") or "").strip()
+    entity = (request.form.get("entity") or "").strip()
+
+    try:
+        df = load_students_df()
+    except Exception as e:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error=f"خطأ في قراءة ملف الإكسل: {e}")
+
+    row = df[df[COL_TRAINEE_ID] == trainee_id]
+    if row.empty:
+        return render_template_string(LOGIN_HTML, title=APP_TITLE, error="الرقم التدريبي غير موجود.")
+
+    r = row.iloc[0]
+    specialty_key = (str(r.get(COL_SPECIALTY, "")) or "").strip()
+    if not specialty_key:
+        specialty_key = (str(r.get(COL_PROGRAM, "")) or "").strip()
+
+    slots = get_slots_cache(force_rebuild=True)
+    assignments = get_assignments()
+
+    # منع إعادة الاختيار لو اختار مسبقًا
+    if trainee_id in assignments:
+        return redirect(url_for("choose", tid=trainee_id))
+
+    remaining = remaining_slots_for_key(slots, specialty_key, assignments)
+
+    if entity not in remaining:
+        # لا توجد فرص متاحة
+        return render_template_string(
+            CHOOSE_HTML,
+            title=APP_TITLE,
+            trainee_id=trainee_id,
+            trainee_name=str(r.get(COL_TRAINEE_NAME, "")).strip(),
+            specialty_key=specialty_key,
+            options=sorted(remaining.items(), key=lambda x: (-int(x[1]), x[0])),
+            summary=sorted(remaining.items(), key=lambda x: (-int(x[1]), x[0]))[:50],
+            already=False,
+            chosen_entity=None,
+            message="لا توجد فرص متاحة لهذه الجهة (قد تكون انتهت). اختر جهة أخرى.",
+        )
+
+    # حفظ الاختيار
+    assignments[trainee_id] = {
+        "entity": entity,
+        "specialty_key": specialty_key,
+        "ts": datetime.utcnow().isoformat(),
+    }
+    _write_json(ASSIGNMENTS_FILE, assignments)
+
+    return redirect(url_for("choose", tid=trainee_id))
+
+
+@app.get("/letter/<tid>")
+def letter(tid):
+    """
+    توليد خطاب التوجيه:
+    - ينشئ DOCX من template
+    - يحوّله PDF عبر soffice (LibreOffice)
+    - إذا فشل التحويل، يرجّع DOCX بدل PDF مع رسالة خطأ واضحة
+    """
+    trainee_id = str(tid).strip()
+
+    if not LETTER_TEMPLATE.exists():
+        abort(500, "ملف القالب غير موجود: data/letter_template.docx")
+
+    try:
+        df = load_students_df()
+    except Exception as e:
+        abort(500, f"خطأ في قراءة ملف الإكسل: {e}")
+
+    row = df[df[COL_TRAINEE_ID] == trainee_id]
+    if row.empty:
+        abort(404, "المتدرب غير موجود.")
+
+    assignments = get_assignments()
+    if trainee_id not in assignments:
+        abort(400, "لم يتم اختيار جهة تدريب بعد.")
+
+    entity = assignments[trainee_id]["entity"]
+
+    r = row.iloc[0]
+    mapping = {
+        "{{trainee_name}}": str(r.get(COL_TRAINEE_NAME, "")).strip(),
+        "{{trainee_id}}": trainee_id,
+        "{{phone}}": str(r.get(COL_PHONE, "")).strip(),
+        "{{program}}": str(r.get(COL_PROGRAM, "")).strip(),
+        "{{specialty}}": str(r.get(COL_SPECIALTY, "")).strip(),
+        "{{department}}": str(r.get(COL_DEPT, "")).strip(),
+        "{{trainer}}": str(r.get(COL_TRAINER, "")).strip(),
+        "{{course_name}}": str(r.get(COL_COURSE, "")).strip(),
+        "{{reference_no}}": str(r.get(COL_REF, "")).strip(),
+        "{{entity}}": entity,
+        "{{date}}": datetime.now().strftime("%Y-%m-%d"),
+    }
+
+    out_dir = DATA_DIR / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    doc = Document(str(LETTER_TEMPLATE))
+    replace_in_docx(doc, mapping)
+
+    docx_path = out_dir / f"letter_{trainee_id}.docx"
+    doc.save(str(docx_path))
+
+    # حاول PDF
+    try:
+        pdf_path = convert_docx_to_pdf(docx_path, out_dir)
+        return send_file(pdf_path, as_attachment=True, download_name=f"letter_{trainee_id}.pdf")
+    except Exception as e:
+        # رجّع docx إذا PDF فشل (عادة بسبب soffice)
+        return send_file(
+            docx_path,
+            as_attachment=True,
+            download_name=f"letter_{trainee_id}.docx",
+        )
+
+
+# دعم /letter?tid=...
+@app.get("/letter")
+def letter_query():
+    tid = request.args.get("tid")
+    if not tid:
+        abort(400, "ضع tid")
+    return redirect(url_for("letter", tid=str(tid).strip()))
 
 
 if __name__ == "__main__":
