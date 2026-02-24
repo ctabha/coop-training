@@ -408,19 +408,3 @@ def letter_pdf():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "10000"))
     app.run(host="0.0.0.0", port=port)
-________________________________________
-✅ الآن نفّذ هذه الخطوات بالضبط على GitHub
-1.	افتح app.py → اضغط ✏️ Edit
-2.	احذف كل شيء → الصق الكود كامل → Commit
-3.	افتح requirements.txt → الصقه بالكامل:
-flask==3.0.2
-gunicorn==22.0.0
-pandas==2.2.2
-openpyxl==3.1.5
-python-docx==1.1.2
-reportlab==4.2.5
-ثم Commit
-4.	في Render: Settings → Build & Deploy → Start Command:
-gunicorn app:app --bind 0.0.0.0:$PORT
-
-
