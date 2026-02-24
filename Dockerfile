@@ -1,25 +1,31 @@
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libpango-1.0-0 \
-    libpangoft2-1.0-0 \
-    libharfbuzz0b \
-    libffi-dev \
-    libjpeg-dev \
-    libxml2 \
-    libxslt1.1 \
-    libgdk-pixbuf-2.0-0 \
-    libcairo2 \
-    shared-mime-info \
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# LibreOffice + خطوط (عربي) + أدوات
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer \
+    libreoffice-core \
+    fonts-dejavu \
+    fonts-noto \
+    fonts-noto-core \
+    fonts-noto-extra \
+    fonts-noto-ui-core \
+    fonts-noto-ui-extra \
+    fonts-noto-color-emoji \
+    fonts-noto-cjk \
+    fonts-noto-mono \
+    fonts-noto-arabic \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10000"]
+EXPOSE 10000
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:10000", "--workers", "1", "--threads", "2", "--timeout", "180"]
