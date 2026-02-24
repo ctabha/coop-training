@@ -1,6 +1,4 @@
 from flask import send_file, abort
-from weasyprint import HTML
-
 @app.route("/letter")
 def letter_pdf():
     tid = str(request.args.get("tid", "")).strip()
