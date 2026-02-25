@@ -30,7 +30,7 @@ def rtl(text):
 
 def load_students():
     df = pd.read_excel(DATA_FILE)
-    df.columns = [str(c).strip() for c in df.columns]
+    df.columns = df.columns.str.strip()
     return df
 
 
@@ -42,14 +42,22 @@ def letter():
 
     df = load_students()
 
-    required = ["رقم المتدرب", "اسم المتدرب", "رقم الجوال",
-                "التخصص", "المدرب", "الرقم المرجعي", "جهة التدريب"]
+    required = [
+        "رقم المتدرب",
+        "اسم المتدرب",
+        "رقم الجوال",
+        "التخصص",
+        "المدرب",
+        "الرقم المرجعي",
+        "جهة التدريب"
+    ]
 
     missing = [c for c in required if c not in df.columns]
     if missing:
         return f"الأعمدة ناقصة: {missing}", 500
 
     row = df.loc[df["رقم المتدرب"].astype(str).str.strip() == tid]
+
     if row.empty:
         return "لم يتم العثور على المتدرب.", 404
 
@@ -76,14 +84,14 @@ def letter():
     c = canvas.Canvas(packet, pagesize=(width, height))
     c.setFont("AR", 14)
 
-    # ⚠️ الإحداثيات قابلة للتعديل لاحقاً إذا احتجنا
-    c.drawRightString(width - 60, height - 260, rtl(trainee_id))
+    # عدل الإحداثيات فقط إذا احتجت ضبط مكان النص
+    c.drawRightString(width - 60, height - 260, rtl(str(trainee_id)))
     c.drawRightString(width - 60, height - 300, rtl(name))
-    c.drawRightString(width - 60, height - 340, rtl(trainee_id))
+    c.drawRightString(width - 60, height - 340, rtl(str(trainee_id)))
     c.drawRightString(width - 60, height - 380, rtl(major))
-    c.drawRightString(width - 60, height - 420, rtl(phone))
+    c.drawRightString(width - 60, height - 420, rtl(str(phone)))
     c.drawRightString(width - 60, height - 460, rtl(supervisor))
-    c.drawRightString(width - 60, height - 500, rtl(ref_no))
+    c.drawRightString(width - 60, height - 500, rtl(str(ref_no)))
     c.drawRightString(width - 60, height - 540, rtl(entity))
 
     c.save()
