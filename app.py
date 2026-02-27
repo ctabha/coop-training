@@ -1,123 +1,113 @@
-import os
-import io
+from flask import Flask, request, render_template_string, send_file
 import pandas as pd
-from flask import Flask, request, send_file, abort
-
-from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
-
-import arabic_reshaper
-from bidi.algorithm import get_display
-
-from pypdf import PdfReader, PdfWriter
+import os
+from docx import Document
+from docx.shared import Pt
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
+from datetime import datetime
 
 app = Flask(__name__)
 
-DATA_FILE = os.path.join("data", "students.xlsx")
-TEMPLATE_PDF = os.path.join("data", "letter_template.pdf")
-FONT_PATH = os.path.join("static", "fonts", "NotoNaskhArabic-Regular.ttf")
-
-pdfmetrics.registerFont(TTFont("AR", FONT_PATH))
+DATA_FILE = "data/students.xlsx"
+TEMPLATE_FILE = "data/letter_template.docx"
 
 
-def rtl(text):
-    if text is None:
-        return ""
-    reshaped = arabic_reshaper.reshape(str(text))
-    return get_display(reshaped)
+def replace_text_in_doc(doc, replacements):
+    for paragraph in doc.paragraphs:
+        for key, value in replacements.items():
+            if key in paragraph.text:
+                paragraph.text = paragraph.text.replace(key, str(value))
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for key, value in replacements.items():
+                    if key in cell.text:
+                        cell.text = cell.text.replace(key, str(value))
 
 
-def load_students():
-    df = pd.read_excel(DATA_FILE)
-    df.columns = df.columns.str.strip()
-    return df
+@app.route("/", methods=["GET", "POST"])
+def index():
+    message = ""
+
+    if request.method == "POST":
+        training_number = request.form.get("training_number")
+        last4 = request.form.get("last4")
+
+        if not os.path.exists(DATA_FILE):
+            message = "ملف الطلاب غير موجود"
+            return render_template_string(HTML_PAGE, message=message)
+
+        df = pd.read_excel(DATA_FILE)
+
+        if "رقم المتدرب" not in df.columns or "رقم الجوال" not in df.columns:
+            message = "الأعمدة المطلوبة غير موجودة في ملف الطلاب"
+            return render_template_string(HTML_PAGE, message=message)
+
+        student = df[
+            (df["رقم المتدرب"].astype(str) == str(training_number)) &
+            (df["رقم الجوال"].astype(str).str[-4:] == str(last4))
+        ]
+
+        if student.empty:
+            message = "لم يتم العثور على بيانات لهذا المتدرب"
+            return render_template_string(HTML_PAGE, message=message)
+
+        student = student.iloc[0]
+
+        if not os.path.exists(TEMPLATE_FILE):
+            message = "قالب الخطاب غير موجود"
+            return render_template_string(HTML_PAGE, message=message)
+
+        doc = Document(TEMPLATE_FILE)
+
+        replacements = {
+            "{{اسم_المتدرب}}": student.get("اسم المتدرب", ""),
+            "{{رقم_المتدرب}}": student.get("رقم المتدرب", ""),
+            "{{القسم}}": student.get("القسم", ""),
+            "{{التخصص}}": student.get("التخصص", ""),
+            "{{الجهة}}": student.get("جهة التدريب", ""),
+            "{{التاريخ}}": datetime.today().strftime("%Y-%m-%d")
+        }
+
+        replace_text_in_doc(doc, replacements)
+
+        output_path = f"letter_{training_number}.docx"
+        doc.save(output_path)
+
+        return send_file(output_path, as_attachment=True)
+
+    return render_template_string(HTML_PAGE, message=message)
 
 
-@app.get("/letter")
-def letter():
-    tid = request.args.get("tid", "").strip()
-    if not tid:
-        abort(400)
-
-    df = load_students()
-
-    required = [
-        "رقم المتدرب",
-        "اسم المتدرب",
-        "رقم الجوال",
-        "التخصص",
-        "المدرب",
-        "الرقم المرجعي",
-        "جهة التدريب"
-    ]
-
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        return f"الأعمدة ناقصة: {missing}", 500
-
-    row = df.loc[df["رقم المتدرب"].astype(str).str.strip() == tid]
-
-    if row.empty:
-        return "لم يتم العثور على المتدرب.", 404
-
-    row = row.iloc[0]
-
-    if not row["جهة التدريب"]:
-        return "لم يتم العثور على اختيار محفوظ لهذا المتدرب.", 404
-
-    trainee_id = row["رقم المتدرب"]
-    name = row["اسم المتدرب"]
-    phone = row["رقم الجوال"]
-    major = row["التخصص"]
-    supervisor = row["المدرب"]
-    ref_no = row["الرقم المرجعي"]
-    entity = row["جهة التدريب"]
-
-    base_pdf = PdfReader(TEMPLATE_PDF)
-    first_page = base_pdf.pages[0]
-
-    width = float(first_page.mediabox.width)
-    height = float(first_page.mediabox.height)
-
-    packet = io.BytesIO()
-    c = canvas.Canvas(packet, pagesize=(width, height))
-    c.setFont("AR", 14)
-
-    # عدل الإحداثيات فقط إذا احتجت ضبط مكان النص
-    c.drawRightString(width - 60, height - 260, rtl(str(trainee_id)))
-    c.drawRightString(width - 60, height - 300, rtl(name))
-    c.drawRightString(width - 60, height - 340, rtl(str(trainee_id)))
-    c.drawRightString(width - 60, height - 380, rtl(major))
-    c.drawRightString(width - 60, height - 420, rtl(str(phone)))
-    c.drawRightString(width - 60, height - 460, rtl(supervisor))
-    c.drawRightString(width - 60, height - 500, rtl(str(ref_no)))
-    c.drawRightString(width - 60, height - 540, rtl(entity))
-
-    c.save()
-    packet.seek(0)
-
-    overlay_pdf = PdfReader(packet)
-    overlay_page = overlay_pdf.pages[0]
-
-    merged_page = base_pdf.pages[0]
-    merged_page.merge_page(overlay_page)
-
-    writer = PdfWriter()
-    writer.add_page(merged_page)
-
-    output = io.BytesIO()
-    writer.write(output)
-    output.seek(0)
-
-    return send_file(
-        output,
-        as_attachment=True,
-        download_name=f"خطاب_توجيه_{trainee_id}.pdf",
-        mimetype="application/pdf"
-    )
-
+HTML_PAGE = """
+<!DOCTYPE html>
+<html dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>بوابة خطاب التوجيه - التدريب التعاوني</title>
+<style>
+body { font-family: Arial; background:#f2f2f2; text-align:center; }
+.box { background:white; width:60%; margin:50px auto; padding:30px; border-radius:10px; }
+input { padding:10px; margin:10px; width:60%; }
+button { padding:10px 30px; background:#0b1d3a; color:white; border:none; border-radius:5px; }
+.error { color:red; margin-top:20px; }
+</style>
+</head>
+<body>
+<div class="box">
+<h2>بوابة خطاب التوجيه - التدريب التعاوني</h2>
+<form method="POST">
+<input type="text" name="training_number" placeholder="الرقم التدريبي" required><br>
+<input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required><br>
+<button type="submit">دخول</button>
+</form>
+<div class="error">{{message}}</div>
+</div>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=10000)
