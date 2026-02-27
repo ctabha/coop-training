@@ -11,77 +11,153 @@ TEMPLATE_FILE = "data/letter_template.docx"
 
 HTML = """
 <!DOCTYPE html>
-<html dir="rtl">
+<html dir="rtl" lang="ar">
 <head>
 <meta charset="UTF-8">
 <title>بوابة خطاب التوجيه</title>
+<style>
+body{font-family:Arial; text-align:center; padding:40px;}
+input{width:420px; padding:14px; margin:10px; font-size:18px; text-align:right;}
+button{padding:12px 30px; font-size:18px; cursor:pointer;}
+.msg{color:red; margin-top:15px; font-size:18px;}
+</style>
 </head>
-<body style="text-align:center">
+<body>
 <h2>بوابة خطاب التوجيه - التدريب التعاوني</h2>
 <form method="POST">
-<input name="trainee_id" placeholder="الرقم التدريبي" required><br><br>
-<input name="phone_last4" placeholder="آخر 4 أرقام من الجوال" required><br><br>
-<button type="submit">دخول</button>
+  <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
+  <br>
+  <input name="phone_last4" placeholder="آخر 4 أرقام من الجوال" required>
+  <br>
+  <button type="submit">دخول</button>
 </form>
-<p style="color:red;">{{message}}</p>
+<div class="msg">{{message}}</div>
 </body>
 </html>
 """
+
+def norm(s: str) -> str:
+    # توحيد الاسم لتجنب مشاكل المسافات والرموز
+    return "".join(str(s).strip().replace("\ufeff", "").split())
+
+def find_col(cols, candidates):
+    """
+    cols: list of columns
+    candidates: list of keywords we accept (normalized match)
+    """
+    ncols = {norm(c): c for c in cols}
+    # تطابق مباشر
+    for cand in candidates:
+        if cand in ncols:
+            return ncols[cand]
+    # تطابق جزئي (contains)
+    for cand in candidates:
+        for n, original in ncols.items():
+            if cand in n:
+                return original
+    return None
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     message = ""
 
-    if request.method == "POST":
-        trainee_id = request.form["trainee_id"]
-        last4 = request.form["phone_last4"]
+    try:
+        if request.method == "POST":
+            trainee_id = request.form.get("trainee_id", "").strip()
+            last4 = request.form.get("phone_last4", "").strip()
 
-        if not os.path.exists(DATA_FILE):
-            return render_template_string(HTML, message="ملف الطلاب غير موجود")
+            if not os.path.exists(DATA_FILE):
+                return render_template_string(HTML, message="❌ ملف الطلاب غير موجود داخل data/students.xlsx")
 
-        df = pd.read_excel(DATA_FILE)
-        df["رقم المتدرب"] = df["رقم المتدرب"].astype(str)
-        df["رقم الجوال"] = df["رقم الجوال"].astype(str)
+            df = pd.read_excel(DATA_FILE)
+            df.columns = [str(c) for c in df.columns]  # تأكيد أنها نصوص
 
-        student = df[df["رقم المتدرب"] == trainee_id]
+            # ابحث عن الأعمدة الأساسية حتى لو كان اسمها مختلف
+            col_id = find_col(df.columns, [
+                norm("رقم المتدرب"),
+                norm("الرقم التدريبي"),
+                norm("الرقم_التدريبي"),
+                norm("trainee_id"),
+            ])
 
-        if student.empty:
-            return render_template_string(HTML, message="لم يتم العثور على المتدرب")
+            col_name = find_col(df.columns, [
+                norm("اسم المتدرب"),
+                norm("اسم_المتدرب"),
+                norm("trainee_name"),
+            ])
 
-        student = student.iloc[0]
+            col_phone = find_col(df.columns, [
+                norm("رقم الجوال"),
+                norm("رقم_الجوال"),
+                norm("الجوال"),
+                norm("الهاتف"),
+                norm("phone"),
+            ])
 
-        if not student["رقم الجوال"].endswith(last4):
-            return render_template_string(HTML, message="آخر 4 أرقام غير صحيحة")
+            # أعمدة اختيارية
+            col_supervisor = find_col(df.columns, [norm("المدرب"), norm("المشرف"), norm("college_supervisor")])
+            col_entity = find_col(df.columns, [norm("جهة التدريب"), norm("جهة_التدريب"), norm("training_entity")])
+            col_course_ref = find_col(df.columns, [norm("الرقم المرجعي"), norm("الرقمالمرجعي"), norm("course_ref")])
 
-        if not os.path.exists(TEMPLATE_FILE):
-            return render_template_string(HTML, message="قالب الخطاب غير موجود")
+            # لو ناقص عمود أساسي نعرض رسالة بدل 500
+            missing = []
+            if not col_id: missing.append("رقم المتدرب/الرقم التدريبي")
+            if not col_name: missing.append("اسم المتدرب")
+            if not col_phone: missing.append("رقم الجوال")
 
-        doc = DocxTemplate(TEMPLATE_FILE)
+            if missing:
+                return render_template_string(
+                    HTML,
+                    message="❌ الأعمدة الأساسية غير موجودة في Excel: " + " ، ".join(missing) +
+                            "<br>✅ الأعمدة الموجودة عندك: " + " | ".join(df.columns.astype(str).tolist())
+                )
 
-        context = {
-            "trainee_name": student["اسم المتدرب"],
-            "trainee_id": student["رقم المتدرب"],
-            "phone": student["رقم الجوال"],
-            "college_supervisor": student.get("المدرب", ""),
-            "training_entity": student.get("جهة التدريب", ""),
-            "course_ref": student.get("الرقم المرجعي", "")
-        }
+            # تحويل القيم نص عشان المطابقة
+            df[col_id] = df[col_id].astype(str).str.strip()
+            df[col_phone] = df[col_phone].astype(str).str.strip()
 
-        doc.render(context)
+            student = df[df[col_id] == str(trainee_id)]
+            if student.empty:
+                return render_template_string(HTML, message="❌ لم يتم العثور على متدرب بهذا الرقم")
 
-        file_stream = BytesIO()
-        doc.save(file_stream)
-        file_stream.seek(0)
+            student = student.iloc[0]
+            phone_full = str(student[col_phone])
 
-        return send_file(
-            file_stream,
-            as_attachment=True,
-            download_name="خطاب_توجيه.docx",
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        )
+            if not phone_full.endswith(str(last4)):
+                return render_template_string(HTML, message="❌ آخر 4 أرقام من الجوال غير صحيحة")
 
-    return render_template_string(HTML, message=message)
+            if not os.path.exists(TEMPLATE_FILE):
+                return render_template_string(HTML, message="❌ قالب الخطاب غير موجود: data/letter_template.docx")
 
+            doc = DocxTemplate(TEMPLATE_FILE)
+
+            context = {
+                "trainee_name": str(student[col_name]),
+                "trainee_id": str(student[col_id]),
+                "phone": phone_full,
+                "college_supervisor": str(student[col_supervisor]) if col_supervisor else "",
+                "training_entity": str(student[col_entity]) if col_entity else "",
+                "course_ref": str(student[col_course_ref]) if col_course_ref else "",
+            }
+
+            doc.render(context)
+
+            file_stream = BytesIO()
+            doc.save(file_stream)
+            file_stream.seek(0)
+
+            return send_file(
+                file_stream,
+                as_attachment=True,
+                download_name="خطاب_توجيه.docx",
+                mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
+
+        return render_template_string(HTML, message=message)
+
+    except Exception as e:
+        # بدل Internal Server Error نعطيك السبب على الصفحة
+        return render_template_string(HTML, message=f"❌ خطأ داخل التطبيق: {e}")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
