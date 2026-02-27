@@ -2,3 +2,4 @@ Flask==3.0.0
 pandas==2.2.0
 openpyxl==3.1.2
 docxtpl==0.16.8
+gunicorn==21.2.0
