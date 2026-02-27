@@ -53,6 +53,9 @@ def index():
         if not student["رقم الجوال"].endswith(last4):
             return render_template_string(HTML, message="آخر 4 أرقام غير صحيحة")
 
+        if not os.path.exists(TEMPLATE_FILE):
+            return render_template_string(HTML, message="قالب الخطاب غير موجود")
+
         doc = DocxTemplate(TEMPLATE_FILE)
 
         context = {
