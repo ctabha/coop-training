@@ -1,113 +1,147 @@
-from flask import Flask, request, render_template_string, send_file
-import pandas as pd
 import os
-from docx import Document
-from docx.shared import Pt
-from docx.oxml.ns import qn
-from docx.oxml import OxmlElement
-from datetime import datetime
+import json
+import pandas as pd
+from flask import Flask, request, send_file, jsonify, render_template
+from docxtpl import DocxTemplate
+from io import BytesIO
 
 app = Flask(__name__)
 
-DATA_FILE = "data/students.xlsx"
-TEMPLATE_FILE = "data/letter_template.docx"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+
+STUDENTS_FILE = os.path.join(DATA_DIR, "students.xlsx")
+SLOTS_FILE = os.path.join(DATA_DIR, "slots.json")
+ASSIGNMENTS_FILE = os.path.join(DATA_DIR, "assignments.json")
+TEMPLATE_FILE = os.path.join(DATA_DIR, "letter_template.docx")
 
 
-def replace_text_in_doc(doc, replacements):
-    for paragraph in doc.paragraphs:
-        for key, value in replacements.items():
-            if key in paragraph.text:
-                paragraph.text = paragraph.text.replace(key, str(value))
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for key, value in replacements.items():
-                    if key in cell.text:
-                        cell.text = cell.text.replace(key, str(value))
+def load_students():
+    df = pd.read_excel(STUDENTS_FILE)
+    # تنظيف أسماء الأعمدة (اختياري لكن مفيد)
+    df.columns = [str(c).strip() for c in df.columns]
+    return df
 
 
-@app.route("/", methods=["GET", "POST"])
-def index():
-    message = ""
-
-    if request.method == "POST":
-        training_number = request.form.get("training_number")
-        last4 = request.form.get("last4")
-
-        if not os.path.exists(DATA_FILE):
-            message = "ملف الطلاب غير موجود"
-            return render_template_string(HTML_PAGE, message=message)
-
-        df = pd.read_excel(DATA_FILE)
-
-        if "رقم المتدرب" not in df.columns or "رقم الجوال" not in df.columns:
-            message = "الأعمدة المطلوبة غير موجودة في ملف الطلاب"
-            return render_template_string(HTML_PAGE, message=message)
-
-        student = df[
-            (df["رقم المتدرب"].astype(str) == str(training_number)) &
-            (df["رقم الجوال"].astype(str).str[-4:] == str(last4))
-        ]
-
-        if student.empty:
-            message = "لم يتم العثور على بيانات لهذا المتدرب"
-            return render_template_string(HTML_PAGE, message=message)
-
-        student = student.iloc[0]
-
-        if not os.path.exists(TEMPLATE_FILE):
-            message = "قالب الخطاب غير موجود"
-            return render_template_string(HTML_PAGE, message=message)
-
-        doc = Document(TEMPLATE_FILE)
-
-        replacements = {
-            "{{اسم_المتدرب}}": student.get("اسم المتدرب", ""),
-            "{{رقم_المتدرب}}": student.get("رقم المتدرب", ""),
-            "{{القسم}}": student.get("القسم", ""),
-            "{{التخصص}}": student.get("التخصص", ""),
-            "{{الجهة}}": student.get("جهة التدريب", ""),
-            "{{التاريخ}}": datetime.today().strftime("%Y-%m-%d")
-        }
-
-        replace_text_in_doc(doc, replacements)
-
-        output_path = f"letter_{training_number}.docx"
-        doc.save(output_path)
-
-        return send_file(output_path, as_attachment=True)
-
-    return render_template_string(HTML_PAGE, message=message)
+def load_json(path, default):
+    if not os.path.exists(path):
+        return default
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
-HTML_PAGE = """
-<!DOCTYPE html>
-<html dir="rtl">
-<head>
-<meta charset="UTF-8">
-<title>بوابة خطاب التوجيه - التدريب التعاوني</title>
-<style>
-body { font-family: Arial; background:#f2f2f2; text-align:center; }
-.box { background:white; width:60%; margin:50px auto; padding:30px; border-radius:10px; }
-input { padding:10px; margin:10px; width:60%; }
-button { padding:10px 30px; background:#0b1d3a; color:white; border:none; border-radius:5px; }
-.error { color:red; margin-top:20px; }
-</style>
-</head>
-<body>
-<div class="box">
-<h2>بوابة خطاب التوجيه - التدريب التعاوني</h2>
-<form method="POST">
-<input type="text" name="training_number" placeholder="الرقم التدريبي" required><br>
-<input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required><br>
-<button type="submit">دخول</button>
-</form>
-<div class="error">{{message}}</div>
-</div>
-</body>
-</html>
-"""
+@app.get("/api/slots")
+def api_slots():
+    # ترجع الفرص للواجهة
+    slots = load_json(SLOTS_FILE, [])
+    return jsonify(slots)
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+
+@app.post("/api/assign")
+def api_assign():
+    """
+    ينقص الفرصة/يحجزها للمتدرب
+    body: { "trainee_id": "...", "slot_id": "..." }
+    """
+    body = request.get_json(force=True)
+    trainee_id = str(body.get("trainee_id", "")).strip()
+    slot_id = str(body.get("slot_id", "")).strip()
+
+    assignments = load_json(ASSIGNMENTS_FILE, {})
+    slots = load_json(SLOTS_FILE, [])
+
+    if not trainee_id or not slot_id:
+        return jsonify({"ok": False, "error": "بيانات ناقصة"}), 400
+
+    # تحقق من وجود الفرصة
+    slot = next((s for s in slots if str(s.get("id")) == slot_id), None)
+    if not slot:
+        return jsonify({"ok": False, "error": "الفرصة غير موجودة"}), 404
+
+    # تحقق من المتاح
+    remaining = int(slot.get("remaining", 0))
+    if remaining <= 0:
+        return jsonify({"ok": False, "error": "لا يوجد مقاعد متاحة"}), 400
+
+    # منع الحجز المكرر
+    if trainee_id in assignments:
+        return jsonify({"ok": False, "error": "تم الحجز سابقًا"}), 400
+
+    # احجز وانقص
+    assignments[trainee_id] = {"slot_id": slot_id}
+    slot["remaining"] = remaining - 1
+
+    # احفظ
+    with open(ASSIGNMENTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(assignments, f, ensure_ascii=False, indent=2)
+
+    with open(SLOTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(slots, f, ensure_ascii=False, indent=2)
+
+    return jsonify({"ok": True, "remaining": slot["remaining"]})
+
+
+@app.post("/letter")
+def generate_letter():
+    """
+    يطلع خطاب DOCX معبّى
+    form fields: trainee_id, phone_last4
+    """
+    trainee_id = str(request.form.get("trainee_id", "")).strip()
+    phone_last4 = str(request.form.get("phone_last4", "")).strip()
+
+    if not trainee_id or not phone_last4:
+        return "البيانات ناقصة", 400
+
+    if not os.path.exists(TEMPLATE_FILE):
+        return "قالب الخطاب غير موجود", 500
+
+    df = load_students()
+
+    # عدّل أسماء الأعمدة هنا حسب ملفك (من صورتك)
+    # عندك: رقم المتدرب, رقم الجوال, اسم المتدرب, الرقم المرجعي, اسم المقرر, المدرب, جهة التدريب
+    id_col = "رقم المتدرب"
+    phone_col = "رقم الجوال"
+    name_col = "اسم المتدرب"
+    ref_col = "الرقم المرجعي"
+    course_col = "اسم المقرر"
+    supervisor_col = "المدرب"
+    entity_col = "جهة التدريب"
+
+    for col in [id_col, phone_col, name_col]:
+        if col not in df.columns:
+            return f"العمود غير موجود في students.xlsx: {col}", 500
+
+    # طابق المتدرب
+    df[id_col] = df[id_col].astype(str).str.strip()
+    df[phone_col] = df[phone_col].astype(str).str.strip()
+
+    row = df[df[id_col] == trainee_id]
+    if row.empty:
+        return "لم يتم العثور على متدرب بهذا الرقم", 404
+
+    row = row.iloc[0]
+    phone = str(row.get(phone_col, "")).strip()
+    if len(phone) < 4 or phone[-4:] != phone_last4:
+        return "آخر 4 أرقام من الجوال غير صحيحة", 400
+
+    # ✅ المفاتيح هنا لازم تطابق اللي داخل قالب الـ DOCX عندك
+    context = {
+        "phone": phone,
+        "trainee_name": str(row.get(name_col, "")).strip(),
+        "trainee_id": trainee_id,
+        "course_ref": str(row.get(ref_col, "")).strip(),
+        "college_supervisor": str(row.get(supervisor_col, "")).strip(),
+        "training_entity": str(row.get(entity_col, "")).strip(),
+    }
+
+    doc = DocxTemplate(TEMPLATE_FILE)
+    doc.render(context)
+
+    out = BytesIO()
+    doc.save(out)
+    out.seek(0)
+
+    filename = f"letter_{trainee_id}.docx"
+    return send_file(out, as_attachment=True, download_name=filename,
+                     mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
