@@ -2,120 +2,51 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
-  <style>
-    body{
-      margin:0;
-      font-family: Tahoma, Arial, sans-serif;
-      background:#f5f5f5;
-    }
-    .wrap{
-      min-height:100vh;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      padding:40px 12px;
-      position:relative;
-      overflow:hidden;
-    }
-    /* خلفية (watermark) */
-    .wrap::before{
-      content:"";
-      position:absolute;
-      inset:0;
-      background-image: url("/static/header.jpg");
-      background-repeat:no-repeat;
-      background-position:center;
-      background-size:contain;
-      opacity:0.10;
-      pointer-events:none;
-    }
-    .card{
-      width:min(920px, 96vw);
-      background:white;
-      border-radius:18px;
-      padding:28px;
-      box-shadow:0 10px 30px rgba(0,0,0,.08);
-      position:relative;
-      z-index:1;
-    }
-    h1{
-      text-align:center;
-      margin:0 0 18px 0;
-      font-size:30px;
-    }
-    .grid{
-      display:grid;
-      grid-template-columns: 1fr;
-      gap:14px;
-      max-width:680px;
-      margin:0 auto;
-    }
-    input, select, button{
-      padding:14px 16px;
-      border:1px solid #bbb;
-      border-radius:10px;
-      font-size:18px;
-      width:100%;
-      box-sizing:border-box;
-    }
-    button{
-      background:#0a1a33;
-      color:white;
-      border:none;
-      cursor:pointer;
-      width:180px;
-      margin:10px auto 0;
-      display:block;
-    }
-    .error{
-      color:#b00020;
-      margin-top:14px;
-      text-align:center;
-      white-space:pre-wrap;
-      font-size:14px;
-    }
-    .hint{
-      text-align:center;
-      font-size:14px;
-      color:#555;
-      margin-top:10px;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="wrap">
+  <div class="page">
     <div class="card">
       <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-      <form method="POST" action="/generate">
-        <div class="grid">
-          <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required />
-          <input name="phone4" placeholder="آخر 4 أرقام من الجوال" required />
-
-          <select name="entity" required>
-            <option value="">اختر جهة التدريب</option>
-            {% for e in entities %}
-              <option value="{{e}}">{{e}}</option>
-            {% endfor %}
-          </select>
-
-          <select name="title" required>
-            <option value="">اختر الفرصة (المتبقي)</option>
-            {% for s in slots %}
-              <option value="{{s.title}}">{{s.title}} — المتبقي: {{s.remaining}}</option>
-            {% endfor %}
-          </select>
-
-          <button type="submit">طباعة PDF</button>
-        </div>
+      {% if not trainee %}
+      <form method="post" action="/login">
+        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required />
+        <input name="phone_last4" placeholder="آخر 4 أرقام من الجوال" required />
+        <button type="submit">دخول</button>
       </form>
-
-      {% if error %}
-        <div class="error">{{error}}</div>
       {% else %}
-        <div class="hint">بعد اختيار الجهة والفرصة اضغط (طباعة PDF) وسيتم تنزيل الملف.</div>
+      <div class="success">
+        تم الدخول: {{ trainee["اسم المتدرب"] }} ({{ trainee["رقم المتدرب"] }})
+      </div>
+
+      <form method="post" action="/generate">
+        <input type="hidden" name="trainee_id" value="{{ trainee['رقم المتدرب'] }}" />
+
+        <select name="training_entity" required>
+          <option value="">اختر جهة التدريب</option>
+          {% for e in entities %}
+            <option value="{{e}}">{{e}}</option>
+          {% endfor %}
+        </select>
+
+        <select name="specialty" required>
+          <option value="">اختر الفرصة / التخصص</option>
+          {% for s in specialties %}
+            <option value="{{s}}">
+              {{s}} (المتبقي: {{remaining_map[s]}})
+            </option>
+          {% endfor %}
+        </select>
+
+        <button type="submit">طباعة PDF</button>
+      </form>
+      {% endif %}
+
+      {% if message %}
+        <div class="{{ 'error' if error else 'success' }}">{{ message }}</div>
       {% endif %}
     </div>
   </div>
