@@ -7,7 +7,13 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <div class="page">
+
+  <!-- ✅ هيدر الموقع (في راس الصفحة) -->
+  <header class="site-header">
+    <img class="site-header-img" src="/static/header.jpg" alt="Header" />
+  </header>
+
+  <main class="page">
     <div class="card">
       <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
@@ -49,6 +55,7 @@
         <div class="{{ 'error' if error else 'success' }}">{{ message }}</div>
       {% endif %}
     </div>
-  </div>
+  </main>
+
 </body>
 </html>
