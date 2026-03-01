@@ -74,3 +74,31 @@ button:hover {
   font-size: 16px;
   white-space: pre-line;
 }
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>بوابة التدريب التعاوني</title>
+</head>
+<body style="font-family:Tahoma; direction:rtl; text-align:center;">
+
+<h2>بوابة التدريب التعاوني</h2>
+
+{% if error %}
+<p style="color:red;">{{ error }}</p>
+{% endif %}
+
+{% if not trainee %}
+<form method="POST">
+<input name="trainee_id" placeholder="رقم المتدرب"><br><br>
+<input name="phone4" placeholder="آخر 4 أرقام من الجوال"><br><br>
+<button type="submit">دخول</button>
+</form>
+{% else %}
+<p>تم الدخول بنجاح</p>
+<p>اسم المتدرب: {{ trainee["اسم المتدرب"] }}</p>
+<p>رقم المتدرب: {{ trainee["رقم المتدرب"] }}</p>
+{% endif %}
+
+</body>
+</html>
