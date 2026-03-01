@@ -1,58 +1,71 @@
-import os
-import pandas as pd
 from flask import Flask, render_template, request
+import pandas as pd
+import os
 
 app = Flask(__name__)
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
-SLOTS_JSON = os.path.join(DATA_DIR, "slots.json")
-ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
+DATA_PATH = os.path.join("data", "students.xlsx")
 
-def normalize_cols(df: pd.DataFrame) -> pd.DataFrame:
-    # توحيد أسماء الأعمدة (إزالة مسافات/أسطر/رموز غريبة)
-    df = df.copy()
-    df.columns = (
-        df.columns.astype(str)
-        .str.replace("\n", " ", regex=False)
-        .str.replace("\r", " ", regex=False)
-        .str.strip()
-    )
-    return df
+def normalize_phone(x):
+    if pd.isna(x):
+        return ""
+    s = str(x).strip()
+    # إزالة .0 لو كانت أرقام من إكسل
+    if s.endswith(".0"):
+        s = s[:-2]
+    # إزالة المسافات والرموز
+    s = "".join(ch for ch in s if ch.isdigit())
+    return s
 
-def load_students_df() -> pd.DataFrame:
-    df = pd.read_excel(STUDENTS_XLSX, dtype=str).fillna("")
-    df = normalize_cols(df)
-    # نظّف أرقام الهوية والجوال من الفراغات
-    if "رقم المتدرب" in df.columns:
-        df["رقم المتدرب"] = df["رقم المتدرب"].str.strip()
-    if "رقم الجوال" in df.columns:
-        df["رقم الجوال"] = df["رقم الجوال"].str.strip()
-    return df
+@app.route("/", methods=["GET", "POST"])
+def index():
+    error = None
+    trainee = None
 
-def find_trainee(df: pd.DataFrame, trainee_id: str, last4: str) -> dict | None:
-    trainee_id = (trainee_id or "").strip()
-    last4 = (last4 or "").strip()
+    if request.method == "POST":
+        trainee_id = (request.form.get("trainee_id") or "").strip()
+        last4 = (request.form.get("last4") or "").strip()
 
-    # تأكد من وجود الأعمدة الأساسية
-    required = {"رقم المتدرب", "رقم الجوال"}
-    if not required.issubset(set(df.columns)):
-        # رجّع None وخلي الرسالة واضحة للمستخدم بدل Exception
-        return None
+        if not trainee_id or not last4:
+            error = "فضلاً أدخل رقم المتدرب وآخر 4 أرقام من الجوال"
+            return render_template("index.html", error=error)
 
-    # فلترة: رقم المتدرب + آخر 4 من الجوال
-    m = df[df["رقم المتدرب"].eq(trainee_id)]
-    if m.empty:
-        return None
+        if not os.path.exists(DATA_PATH):
+            error = f"ملف الطلاب غير موجود: {DATA_PATH}"
+            return render_template("index.html", error=error)
 
-    # آخر 4 أرقام من الجوال
-    def phone_last4(x: str) -> str:
-        x = "".join([c for c in str(x) if c.isdigit()])
-        return x[-4:] if len(x) >= 4 else ""
+        df = pd.read_excel(DATA_PATH)
 
-    m = m[m["رقم الجوال"].apply(phone_last4).eq(last4)]
-    if m.empty:
-        return None
+        # تأكد من وجود الأعمدة الأساسية
+        required_cols = ["رقم المتدرب", "رقم الجوال"]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            error = f"الأعمدة التالية غير موجودة في Excel: {', '.join(missing)}"
+            return render_template("index.html", error=error)
 
-    # ✅ الأهم: رجّع قاموس واحد وليس قائمة
-    return m.iloc[0].to_dict()
+        # فلترة المتدرب
+        df["رقم المتدرب"] = df["رقم المتدرب"].astype(str).str.strip()
+        df["رقم الجوال_norm"] = df["رقم الجوال"].apply(normalize_phone)
+
+        matches = df[df["رقم المتدرب"] == str(trainee_id)]
+
+        if matches.empty:
+            error = "لم يتم العثور على رقم المتدرب"
+            return render_template("index.html", error=error)
+
+        # أخذ أول نتيجة كقاموس (وهذا هو حل الخطأ)
+        trainee_list = matches.to_dict("records")
+        trainee = trainee_list[0]
+
+        phone = normalize_phone(trainee.get("رقم الجوال", ""))
+        if len(phone) < 4 or phone[-4:] != last4:
+            error = "آخر 4 أرقام من الجوال غير صحيحة"
+            return render_template("index.html", error=error)
+
+        return render_template("index.html", trainee=trainee)
+
+    return render_template("index.html")
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
