@@ -6,42 +6,71 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="page-bg">
+
+  <!-- الهيدر في رأس الموقع -->
   <div class="site-header">
     <img src="/static/header.jpg" alt="header">
   </div>
 
   <div class="card">
+
     <h1>بوابة التدريب التعاوني</h1>
 
-    <p>اسم المتدرب: <b>{{ trainee["اسم المتدرب"] }}</b></p>
-    <p>رقم المتدرب: <b>{{ trainee["رقم المتدرب"] }}</b></p>
-    <p>التخصص: <b>{{ specialty }}</b></p>
+    <p><b>اسم المتدرب:</b> {{ trainee["اسم المتدرب"] }}</p>
+    <p><b>رقم المتدرب:</b> {{ trainee["رقم المتدرب"] }}</p>
+    <p><b>التخصص:</b> {{ specialty }}</p>
 
     {% if success %}
       <p class="success">{{ success }}</p>
     {% endif %}
+
     {% if error %}
       <p class="error">{{ error }}</p>
     {% endif %}
 
     {% if existing %}
       <hr>
-      <p>تم اختيار الجهة: <b>{{ existing["entity"] }}</b></p>
-      <a class="btn" href="/download_pdf/{{ trainee["رقم المتدرب"] }}">تحميل خطاب التوجيه PDF</a>
-    {% else %}
-      <hr>
-      <form method="POST">
-        <label>اختر جهة التدريب (المقاعد المتبقية تظهر بجانبها):</label>
-        <select name="entity" required>
-          <option value="">-- اختر --</option>
-          {% for item in available_entities %}
-            <option value="{{ item.name }}">{{ item.name }} (متبقي: {{ item.count }})</option>
-          {% endfor %}
-        </select>
+      <p>تم اختيار الجهة:</p>
+      <h3>{{ existing["entity"] }}</h3>
 
-        <button type="submit">تأكيد الاختيار</button>
-      </form>
+      <br>
+      <a class="btn" href="/download_pdf/{{ trainee['رقم المتدرب'] }}">
+        تحميل خطاب التوجيه PDF
+      </a>
+
+    {% else %}
+
+      <hr>
+
+      {% if available_entities|length == 0 %}
+        <p class="error">لا توجد مقاعد متاحة حالياً لهذا التخصص</p>
+      {% else %}
+
+        <form method="POST">
+
+          <label>اختر جهة التدريب (المقاعد المتبقية بجانبها):</label>
+
+          <select name="entity" required>
+            <option value="">-- اختر --</option>
+
+            {% for item in available_entities %}
+              <option value="{{ item.name }}">
+                {{ item.name }} (متبقي: {{ item.count }})
+              </option>
+            {% endfor %}
+
+          </select>
+
+          <br>
+          <button type="submit">تأكيد الاختيار</button>
+
+        </form>
+
+      {% endif %}
+
     {% endif %}
+
   </div>
+
 </body>
 </html>
