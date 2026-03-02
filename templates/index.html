@@ -1,28 +1,27 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8">
-<title>بوابة التدريب التعاوني</title>
+  <meta charset="utf-8">
+  <title>بوابة التدريب التعاوني</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
-<body style="font-family:Tahoma; direction:rtl; text-align:center;">
+<body class="page-bg">
+  <div class="site-header">
+    <img src="/static/header.jpg" alt="header">
+  </div>
 
-<h2>بوابة التدريب التعاوني</h2>
+  <div class="card">
+    <h1>بوابة التدريب التعاوني</h1>
 
-{% if error %}
-<p style="color:red;">{{ error }}</p>
-{% endif %}
+    <form method="POST">
+      <input type="text" name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
+      <input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required>
+      <button type="submit">دخول</button>
+    </form>
 
-{% if not trainee %}
-<form method="POST">
-<input name="trainee_id" placeholder="رقم المتدرب"><br><br>
-<input name="phone4" placeholder="آخر 4 أرقام من الجوال"><br><br>
-<button type="submit">دخول</button>
-</form>
-{% else %}
-<p>تم الدخول بنجاح</p>
-<p>اسم المتدرب: {{ trainee["اسم المتدرب"] }}</p>
-<p>رقم المتدرب: {{ trainee["رقم المتدرب"] }}</p>
-{% endif %}
-
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
+  </div>
 </body>
 </html>
