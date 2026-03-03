@@ -1,41 +1,37 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<header class="site-header">
-  <img src="/static/header.jpg" alt="Header">
-</header>
+<div class="header-wrap">
+  <img src="/static/header.jpg" alt="header">
+</div>
 
-<div class="page">
+<div class="container">
   <div class="card">
     <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
     <form method="post">
-      <div class="row">
-        <div class="col">
-          <label>الرقم التدريبي / رقم المتدرب</label>
-          <input name="trainee_id" required>
-        </div>
-        <div class="col">
-          <label>آخر 4 أرقام من الجوال</label>
-          <input name="last4" required>
-        </div>
+      <div class="field">
+        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" autocomplete="off">
       </div>
 
-      <div style="margin-top:14px; text-align:center;">
-        <button class="btn" type="submit">دخول</button>
+      <div class="field">
+        <input name="last4" placeholder="آخر 4 أرقام من الجوال" autocomplete="off">
       </div>
+
+      <button type="submit">دخول</button>
 
       {% if error %}
-        <div class="msg-error">{{ error }}</div>
+        <div class="error">{{ error }}</div>
       {% endif %}
     </form>
+
   </div>
 </div>
 
