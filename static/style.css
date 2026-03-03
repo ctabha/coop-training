@@ -3,93 +3,99 @@
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
 }
 
-*{ box-sizing:border-box; }
-
-body{
+html, body{
   margin:0;
-  font-family:"NotoNaskh", serif;
+  padding:0;
+  font-family: "NotoNaskh", Arial, sans-serif;
   direction: rtl;
-  background: #f3f5f7;
+  background:#f3f3f3;
 }
 
-.site-header{
-  width:100%;
+.header-wrap{
+  width: 100%;
+  display:flex;
+  justify-content:center;
   background:#fff;
-  border-bottom:1px solid #e6e6e6;
 }
 
-.site-header img{
-  width:100%;
-  height:auto;
+.header-wrap img{
+  width: 100%;
+  max-width: 1200px;
+  height: auto;
   display:block;
 }
 
-.page{
-  max-width: 980px;
-  margin: 18px auto 40px;
-  padding: 0 14px;
+.container{
+  max-width: 900px;
+  margin: 20px auto;
+  padding: 0 16px;
 }
 
 .card{
   background:#fff;
-  border-radius:16px;
-  padding:24px;
-  box-shadow:0 10px 30px rgba(0,0,0,.08);
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.08);
 }
 
 h1,h2{
-  margin:0 0 18px;
-  text-align:center;
+  margin: 0 0 14px 0;
 }
 
-label{
-  display:block;
-  margin:10px 0 6px;
-  color:#333;
+.field{
+  margin: 10px 0;
 }
 
 input, select{
-  width:100%;
-  padding:12px;
-  border:1px solid #cfd6dd;
-  border-radius:10px;
-  font-size:16px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #d0d0d0;
+  border-radius: 10px;
+  font-size: 16px;
+  box-sizing: border-box;
 }
 
 .row{
   display:flex;
-  gap:10px;
-  flex-wrap:wrap;
+  gap: 12px;
+  align-items:center;
 }
 
-.col{
+.row > div{
   flex:1;
-  min-width:220px;
 }
 
-.btn{
+button{
   background:#0b1b33;
   color:#fff;
-  border:none;
-  padding:12px 16px;
-  border-radius:10px;
+  border:0;
+  padding: 12px 18px;
+  border-radius: 10px;
   cursor:pointer;
-  font-size:16px;
+  font-size: 16px;
 }
 
-.btn.secondary{
-  background:#2b2b2b;
-}
+button:hover{ opacity:.95; }
 
-.msg-error{
-  margin-top:12px;
+.error{
   color:#b00020;
-  font-weight:bold;
-  text-align:center;
+  margin-top: 10px;
 }
 
 .small{
-  color:#555;
-  font-size:14px;
-  margin-top:10px;
+  color:#333;
+  font-size: 14px;
+}
+
+.kv{
+  display:grid;
+  grid-template-columns: 1fr 2fr;
+  gap: 8px 14px;
+  margin: 10px 0 18px;
+}
+
+hr{
+  border:0;
+  border-top:1px solid #eee;
+  margin: 16px 0;
 }
