@@ -1,362 +1,283 @@
+from flask import Flask, render_template, request, redirect, url_for, send_file
+import pandas as pd
 import os
 import json
-import time
+import tempfile
 import subprocess
 from datetime import datetime
 
-import pandas as pd
-from flask import Flask, render_template, request, redirect, send_file
-
-from docxtpl import DocxTemplate
-
 app = Flask(__name__)
 
-DATA_DIR = "data"
-STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
-TEMPLATE_DOCX = os.path.join(DATA_DIR, "letter_template.docx")
-ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
-OUT_DIR = os.path.join(DATA_DIR, "out")
+DATA_XLSX = os.path.join("data", "students.xlsx")
+TEMPLATE_DOCX = os.path.join("data", "letter_template.docx")
+SLOTS_JSON = os.path.join("data", "slots.json")
+ASSIGNMENTS_JSON = os.path.join("data", "assignments.json")
 
-os.makedirs(OUT_DIR, exist_ok=True)
+REQUIRED_COLS = ["رقم المتدرب", "رقم الجوال", "اسم المتدرب", "التخصص", "البرنامج", "جهة التدريب"]
 
-
-# -------------------------
-# Helpers
-# -------------------------
-def safe_read_json(path, default):
-    if not os.path.exists(path):
-        return default
+def load_json(path, default):
     try:
+        if not os.path.exists(path):
+            return default
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return default
 
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
-def safe_write_json(path, obj):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(obj, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
-
-
-def normalize_phone(x) -> str:
+def normalize_phone(x):
     if pd.isna(x):
         return ""
     s = str(x).strip()
+    # إزالة .0 لو كانت أرقام من إكسل
     if s.endswith(".0"):
         s = s[:-2]
-    digits = "".join(ch for ch in s if ch.isdigit())
-    return digits
+    # خذ فقط الأرقام
+    s = "".join(ch for ch in s if ch.isdigit())
+    return s
 
+def read_students():
+    if not os.path.exists(DATA_XLSX):
+        raise FileNotFoundError(f"ملف الطلاب غير موجود: {DATA_XLSX}")
 
-def ensure_files():
-    os.makedirs(DATA_DIR, exist_ok=True)
-    if not os.path.exists(ASSIGNMENTS_JSON):
-        safe_write_json(ASSIGNMENTS_JSON, [])
-
-
-def read_students_df() -> pd.DataFrame:
-    if not os.path.exists(STUDENTS_XLSX):
-        raise FileNotFoundError(f"ملف Excel غير موجود: {STUDENTS_XLSX}")
-
-    df = pd.read_excel(STUDENTS_XLSX)
-    df.columns = [str(c).strip() for c in df.columns]
-
-    required = ["رقم المتدرب", "رقم الجوال", "اسم المتدرب", "التخصص", "جهة التدريب"]
-    missing = [c for c in required if c not in df.columns]
+    df = pd.read_excel(DATA_XLSX)
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
-        raise ValueError(f"الأعمدة الأساسية غير موجودة في Excel: {', '.join(missing)}")
+        raise ValueError("الأعمدة التالية غير موجودة في Excel: " + " | ".join(missing))
 
     df["رقم المتدرب"] = df["رقم المتدرب"].astype(str).str.strip()
-    df["رقم_الجوال_norm"] = df["رقم الجوال"].apply(normalize_phone)
-
-    # optional columns
-    optional = ["برنامج", "اسم المقرر", "الرقم المرجعي", "المدرب"]
-    for c in optional:
-        if c not in df.columns:
-            df[c] = ""
-
-    # تنظيف جهة التدريب
-    df["جهة التدريب"] = df["جهة التدريب"].fillna("").astype(str).str.strip()
-    df["التخصص"] = df["التخصص"].fillna("").astype(str).str.strip()
-
+    df["رقم الجوال_norm"] = df["رقم الجوال"].apply(normalize_phone)
+    df["جهة التدريب"] = df["جهة التدريب"].astype(str).fillna("").str.strip()
+    df["التخصص"] = df["التخصص"].astype(str).fillna("").str.strip()
+    df["البرنامج"] = df["البرنامج"].astype(str).fillna("").str.strip()
+    df["اسم المتدرب"] = df["اسم المتدرب"].astype(str).fillna("").str.strip()
     return df
 
-
-def find_trainee(df: pd.DataFrame, trainee_id: str, last4: str):
-    trainee_id = (trainee_id or "").strip()
-    last4 = (last4 or "").strip()
-
-    if not trainee_id or not last4:
-        return None, "فضلاً أدخل رقم المتدرب وآخر 4 أرقام من الجوال"
-
-    rows = df[df["رقم المتدرب"] == trainee_id]
-    if rows.empty:
-        return None, "لم يتم العثور على رقم المتدرب"
-
-    row = rows.iloc[0].to_dict()
-    phone = normalize_phone(row.get("رقم الجوال", ""))
-    if len(phone) < 4 or phone[-4:] != last4:
-        return None, "آخر 4 أرقام من الجوال غير صحيحة"
-
-    return row, None
-
-
-# -------------------------
-# Slots logic (Excel = فرص)
-# كل صف فيه (التخصص + جهة التدريب) = فرصة واحدة
-# -------------------------
-def build_inventory(df: pd.DataFrame) -> dict:
+def build_slots_from_excel(df: pd.DataFrame):
     """
-    returns:
-      inventory[(specialty, entity)] = total_slots (count of rows)
+    كل صف في Excel يعتبر فرصة:
+    (التخصص + جهة التدريب) = مقعد واحد.
+    نجمعها ونطلع عدد المقاعد لكل جهة داخل كل تخصص.
     """
-    inv = {}
-    # نعتبر فقط الصفوف التي فيها جهة تدريب غير فارغة
-    df2 = df[(df["التخصص"] != "") & (df["جهة التدريب"] != "")]
-    if df2.empty:
-        return inv
+    slots = {}
+    grouped = df[df["جهة التدريب"] != ""].groupby(["التخصص", "جهة التدريب"]).size()
+    for (spec, ent), count in grouped.items():
+        spec = str(spec).strip()
+        ent = str(ent).strip()
+        slots.setdefault(spec, {})
+        slots[spec][ent] = int(count)
+    return slots
 
-    grouped = df2.groupby(["التخصص", "جهة التدريب"]).size().reset_index(name="count")
-    for _, r in grouped.iterrows():
-        inv[(str(r["التخصص"]), str(r["جهة التدريب"]))] = int(r["count"])
-    return inv
+def ensure_slots(df: pd.DataFrame):
+    slots = load_json(SLOTS_JSON, {})
+    if not isinstance(slots, dict) or not slots:
+        slots = build_slots_from_excel(df)
+        save_json(SLOTS_JSON, slots)
+    return slots
 
+def total_and_remaining_for_specialty(slots: dict, specialty: str):
+    spec_slots = slots.get(specialty, {})
+    total = sum(int(v) for v in spec_slots.values())
+    remaining = sum(int(v) for v in spec_slots.values())
+    return total, remaining
 
-def build_used_counts() -> dict:
+def get_entities_for_specialty(slots: dict, specialty: str):
+    spec_slots = slots.get(specialty, {})
+    items = []
+    for ent, cnt in spec_slots.items():
+        cnt = int(cnt)
+        if cnt > 0:
+            items.append({"entity": ent, "remaining": cnt})
+    # ترتيب اختياري: الأكثر بقاءً أولاً
+    items.sort(key=lambda x: x["remaining"], reverse=True)
+    return items
+
+def load_assignments():
+    data = load_json(ASSIGNMENTS_JSON, {})
+    if not isinstance(data, dict):
+        data = {}
+    return data
+
+def save_assignment(trainee_id: str, specialty: str, entity: str):
+    assignments = load_assignments()
+    trainee_id = str(trainee_id)
+
+    assignments[trainee_id] = {
+        "trainee_id": trainee_id,
+        "specialty": specialty,
+        "entity": entity,
+        "timestamp": datetime.now().isoformat()
+    }
+    save_json(ASSIGNMENTS_JSON, assignments)
+
+def render_docx_to_pdf(docx_path: str, out_dir: str):
     """
-    used[(specialty, entity)] = how many trainees already assigned
+    تحويل DOCX -> PDF باستخدام LibreOffice (يعمل على Render)
     """
-    used = {}
-    assignments = safe_read_json(ASSIGNMENTS_JSON, [])
-    for a in assignments:
-        sp = (a.get("specialty") or "").strip()
-        en = (a.get("entity") or "").strip()
-        if not sp or not en:
-            continue
-        used[(sp, en)] = used.get((sp, en), 0) + 1
-    return used
-
-
-def remaining_for_specialty(df: pd.DataFrame, specialty: str):
-    inv = build_inventory(df)
-    used = build_used_counts()
-
-    total = 0
-    remaining_total = 0
-    per_entity = []
-
-    for (sp, en), cnt in inv.items():
-        if sp != specialty:
-            continue
-        total += cnt
-        u = used.get((sp, en), 0)
-        rem = max(cnt - u, 0)
-        remaining_total += rem
-        per_entity.append({"entity": en, "remaining": rem, "total": cnt})
-
-    # فقط الجهات التي فيها متبقي > 0
-    per_entity = [x for x in per_entity if x["remaining"] > 0]
-    # ترتيب: الأكثر بقايا أولاً ثم أبجدي
-    per_entity.sort(key=lambda x: (-x["remaining"], x["entity"]))
-
-    return total, remaining_total, per_entity
-
-
-# -------------------------
-# PDF generation
-# -------------------------
-def convert_docx_to_pdf(docx_path: str, out_dir: str) -> str:
-    cmd = [
-        "libreoffice",
-        "--headless",
-        "--nologo",
-        "--nofirststartwizard",
-        "--convert-to",
-        "pdf",
-        "--outdir",
-        out_dir,
-        docx_path,
-    ]
-    subprocess.run(cmd, check=True)
-
+    # libreoffice command: soffice --headless --convert-to pdf --outdir OUTDIR DOCX
+    subprocess.run(
+        ["soffice", "--headless", "--nologo", "--nofirststartwizard", "--convert-to", "pdf", "--outdir", out_dir, docx_path],
+        check=True
+    )
     base = os.path.splitext(os.path.basename(docx_path))[0]
     pdf_path = os.path.join(out_dir, base + ".pdf")
     if not os.path.exists(pdf_path):
-        raise RuntimeError("فشل تحويل PDF (لم يتم إنشاء الملف).")
+        raise RuntimeError("فشل إنشاء PDF")
     return pdf_path
 
+def make_letter_docx(trainee: dict, entity: str, output_path: str):
+    """
+    تعبئة قالب Word placeholders باستخدام docxtpl
+    """
+    from docxtpl import DocxTemplate
 
-def build_letter_pdf(trainee: dict, chosen_entity: str) -> str:
-    if not os.path.exists(TEMPLATE_DOCX):
-        raise FileNotFoundError(f"قالب الخطاب غير موجود: {TEMPLATE_DOCX}")
+    tpl = DocxTemplate(TEMPLATE_DOCX)
 
-    # ✅ عدّل أسماء المتغيرات لتطابق placeholders في Word
+    # غيّر المفاتيح هنا إذا كانت حقول القالب عندك مختلفة
     context = {
-        "trainee_name": trainee.get("اسم المتدرب", ""),
-        "trainee_id": trainee.get("رقم المتدرب", ""),
-        "phone": normalize_phone(trainee.get("رقم الجوال", "")),
-        "specialty": trainee.get("التخصص", ""),
-        "program": trainee.get("برنامج", ""),
-        "course_name": trainee.get("اسم المقرر", ""),
-        "course_ref": trainee.get("الرقم المرجعي", ""),
-        "trainer": trainee.get("المدرب", ""),
-        "training_entity": chosen_entity,
-        "date": datetime.now().strftime("%Y/%m/%d"),
+        "TraineeName": trainee.get("اسم المتدرب", ""),
+        "AcademicID": trainee.get("رقم المتدرب", ""),
+        "Phone": trainee.get("رقم الجوال_norm", ""),
+        "Specialty": trainee.get("التخصص", ""),
+        "Program": trainee.get("البرنامج", ""),
+        "Company": entity,
+        "LetterNo": trainee.get("الرقم المرجعي", ""),  # إذا عندك عمود آخر عدّل
+        "college_supervisor": trainee.get("المدرب", ""), # إذا عندك عمود آخر عدّل
+        "course_ref": trainee.get("الرقم المرجعي", ""),  # إذا عندك عمود آخر عدّل
+        "training_entity": entity,
     }
 
-    stamp = int(time.time())
-    base_name = f"letter_{trainee.get('رقم المتدرب','')}_{stamp}"
-    out_docx = os.path.join(OUT_DIR, base_name + ".docx")
+    tpl.render(context)
+    tpl.save(output_path)
 
-    doc = DocxTemplate(TEMPLATE_DOCX)
-    doc.render(context)
-    doc.save(out_docx)
-
-    pdf_path = convert_docx_to_pdf(out_docx, OUT_DIR)
-    return pdf_path
-
-
-# -------------------------
-# Routes
-# -------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    ensure_files()
     error = None
-
     if request.method == "POST":
         try:
-            df = read_students_df()
-            trainee_id = request.form.get("trainee_id", "")
-            last4 = request.form.get("last4", "")
-            trainee, error = find_trainee(df, trainee_id, last4)
-            if error:
-                return render_template("index.html", error=error)
-            return redirect(f"/dashboard/{trainee.get('رقم المتدرب','')}")
+            trainee_id = (request.form.get("trainee_id") or "").strip()
+            last4 = (request.form.get("last4") or "").strip()
+
+            if not trainee_id or not last4:
+                return render_template("index.html", error="فضلاً أدخل رقم المتدرب وآخر 4 أرقام من الجوال")
+
+            df = read_students()
+
+            matches = df[df["رقم المتدرب"] == str(trainee_id)]
+            if matches.empty:
+                return render_template("index.html", error="لم يتم العثور على رقم المتدرب")
+
+            trainee = matches.iloc[0].to_dict()
+
+            phone = trainee.get("رقم الجوال_norm", "")
+            if len(phone) < 4 or phone[-4:] != last4:
+                return render_template("index.html", error="آخر 4 أرقام من الجوال غير صحيحة")
+
+            return redirect(url_for("dashboard", trainee_id=trainee_id))
+
         except Exception as e:
-            return render_template("index.html", error=str(e))
+            error = str(e)
 
     return render_template("index.html", error=error)
 
-
 @app.route("/dashboard/<trainee_id>", methods=["GET"])
 def dashboard(trainee_id):
-    ensure_files()
+    error = None
+    ok = None
     try:
-        df = read_students_df()
-        rows = df[df["رقم المتدرب"] == str(trainee_id).strip()]
-        if rows.empty:
-            return render_template("index.html", error="رقم المتدرب غير موجود")
+        df = read_students()
+        matches = df[df["رقم المتدرب"] == str(trainee_id)]
+        if matches.empty:
+            return redirect(url_for("index"))
 
-        trainee = rows.iloc[0].to_dict()
-        specialty = (trainee.get("التخصص") or "").strip()
+        trainee = matches.iloc[0].to_dict()
 
-        total, remaining_total, entity_options = remaining_for_specialty(df, specialty)
-
-        if total == 0:
-            # يعني لا يوجد أي صفوف فرص لهذا التخصص في Excel
-            return render_template(
-                "dashboard.html",
-                trainee=trainee,
-                total_slots=0,
-                remaining_total=0,
-                entity_options=[],
-                error="لا توجد فرص مسجلة لهذا التخصص داخل Excel (تأكد من عمود جهة التدريب للتخصص)."
-            )
+        slots = ensure_slots(df)
+        specialty = trainee.get("التخصص", "")
+        total = sum(int(v) for v in slots.get(specialty, {}).values())
+        remaining = sum(int(v) for v in slots.get(specialty, {}).values())
+        entities = get_entities_for_specialty(slots, specialty)
 
         return render_template(
             "dashboard.html",
             trainee=trainee,
             total_slots=total,
-            remaining_total=remaining_total,
-            entity_options=entity_options,
-            error=None
+            remaining_slots=remaining,
+            entities=entities,
+            error=error,
+            ok=ok
         )
-
     except Exception as e:
-        return render_template("index.html", error=str(e))
+        return render_template("dashboard.html", trainee={"رقم المتدرب": trainee_id, "اسم المتدرب": "", "التخصص": "", "البرنامج": ""}, total_slots=0, remaining_slots=0, entities=[], error=str(e), ok=None)
 
-
-@app.route("/assign", methods=["POST"])
-def assign():
-    ensure_files()
+@app.route("/choose", methods=["POST"])
+def choose():
+    error = None
+    ok = None
     try:
-        df = read_students_df()
-
+        action = (request.form.get("action") or "save").strip()
         trainee_id = (request.form.get("trainee_id") or "").strip()
         entity = (request.form.get("entity") or "").strip()
-        if not trainee_id or not entity:
-            return render_template("index.html", error="بيانات ناقصة")
 
-        rows = df[df["رقم المتدرب"] == trainee_id]
-        if rows.empty:
-            return render_template("index.html", error="رقم المتدرب غير موجود")
-        trainee = rows.iloc[0].to_dict()
+        if not trainee_id:
+            return redirect(url_for("index"))
 
-        specialty = (trainee.get("التخصص") or "").strip()
+        df = read_students()
+        matches = df[df["رقم المتدرب"] == str(trainee_id)]
+        if matches.empty:
+            return redirect(url_for("index"))
+        trainee = matches.iloc[0].to_dict()
+        specialty = trainee.get("التخصص", "")
 
-        # منع تكرار الحجز لنفس المتدرب
-        assignments = safe_read_json(ASSIGNMENTS_JSON, [])
-        if any(a.get("trainee_id") == trainee_id for a in assignments):
-            total, remaining_total, entity_options = remaining_for_specialty(df, specialty)
-            return render_template(
-                "dashboard.html",
-                trainee=trainee,
-                total_slots=total,
-                remaining_total=remaining_total,
-                entity_options=entity_options,
-                error="تم الحجز مسبقًا لهذا المتدرب."
-            )
+        slots = ensure_slots(df)
 
-        # تحقق أن الجهة المختارة لها متبقي
-        total, remaining_total, entity_options = remaining_for_specialty(df, specialty)
-        selected = next((x for x in entity_options if x["entity"] == entity), None)
-        if not selected:
-            return render_template(
-                "dashboard.html",
-                trainee=trainee,
-                total_slots=total,
-                remaining_total=remaining_total,
-                entity_options=entity_options,
-                error="هذه الجهة غير متاحة الآن (قد تكون الفرص انتهت أو ليست ضمن تخصصك)."
-            )
+        if not entity:
+            error = "اختر جهة التدريب أولاً"
+        else:
+            # تحقق من وجود مقاعد
+            spec_slots = slots.get(specialty, {})
+            remaining = int(spec_slots.get(entity, 0))
+            if remaining <= 0:
+                error = "هذه الجهة لا يوجد لها مقاعد متبقية لتخصصك"
+            else:
+                # أنقص المقعد
+                spec_slots[entity] = remaining - 1
+                slots[specialty] = spec_slots
+                save_json(SLOTS_JSON, slots)
 
-        # سجل الحجز
-        assignments.append({
-            "trainee_id": trainee_id,
-            "trainee_name": trainee.get("اسم المتدرب", ""),
-            "specialty": specialty,
-            "entity": entity,
-            "ts": datetime.now().isoformat()
-        })
-        safe_write_json(ASSIGNMENTS_JSON, assignments)
+                # احفظ اختيار المتدرب (بدون append)
+                save_assignment(trainee_id=str(trainee_id), specialty=specialty, entity=entity)
+                ok = "تم حفظ اختيارك بنجاح"
 
-        # طباعة PDF
-        pdf_path = build_letter_pdf(trainee, entity)
+                if action == "pdf":
+                    # توليد DOCX ثم PDF
+                    with tempfile.TemporaryDirectory() as td:
+                        docx_out = os.path.join(td, f"letter_{trainee_id}.docx")
+                        make_letter_docx(trainee, entity, docx_out)
+                        pdf_path = render_docx_to_pdf(docx_out, td)
+                        return send_file(pdf_path, as_attachment=True, download_name=f"letter_{trainee_id}.pdf")
 
-        return send_file(
-            pdf_path,
-            as_attachment=True,
-            download_name=f"خطاب_توجيه_{trainee_id}.pdf"
+        # إعادة عرض اللوحة
+        total = sum(int(v) for v in slots.get(specialty, {}).values())
+        remaining_total = sum(int(v) for v in slots.get(specialty, {}).values())
+        entities_list = get_entities_for_specialty(slots, specialty)
+
+        return render_template(
+            "dashboard.html",
+            trainee=trainee,
+            total_slots=total,
+            remaining_slots=remaining_total,
+            entities=entities_list,
+            error=error,
+            ok=ok
         )
 
-    except subprocess.CalledProcessError:
-        return render_template("index.html", error="فشل تحويل DOCX إلى PDF. تأكد من render-build.sh ووجود LibreOffice.")
     except Exception as e:
-        return render_template("index.html", error=str(e))
-
-
-@app.route("/admin/reset_assignments", methods=["GET"])
-def reset_assignments():
-    """
-    تصفير الحجوزات (يعيد الفرص كما كانت)
-    """
-    ensure_files()
-    safe_write_json(ASSIGNMENTS_JSON, [])
-    return "OK: assignments reset"
-
+        return redirect(url_for("index") + f"?err={str(e)}")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000, debug=True)
+    app.run(debug=True)
