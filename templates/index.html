@@ -1,27 +1,28 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>بوابة التدريب التعاوني</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="page-bg">
-  <div class="site-header">
-    <img src="/static/header.jpg" alt="header">
-  </div>
+  <header class="top-header">
+    <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="header">
+  </header>
 
-  <div class="card">
-    <h1>بوابة التدريب التعاوني</h1>
+  <main class="card">
+    <h1 class="title">بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-    <form method="POST">
-      <input type="text" name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
-      <input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required>
-      <button type="submit">دخول</button>
+    <form method="post" class="form">
+      <input name="trainee_id" class="input" placeholder="الرقم التدريبي / رقم المتدرب" />
+      <input name="last4" class="input" placeholder="آخر 4 أرقام من الجوال" />
+      <button class="btn" type="submit">دخول</button>
+
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
     </form>
-
-    {% if error %}
-      <p class="error">{{ error }}</p>
-    {% endif %}
-  </div>
+  </main>
 </body>
 </html>
