@@ -1,52 +1,64 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>لوحة المتدرب</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-<header class="site-header">
-  <img src="/static/header.jpg" alt="Header">
-</header>
+<div class="header-wrap">
+  <img src="/static/header.jpg" alt="header">
+</div>
 
-<div class="page">
+<div class="container">
   <div class="card">
     <h2>لوحة المتدرب</h2>
 
-    <div class="small">
-      <div><b>اسم المتدرب:</b> {{ trainee["اسم المتدرب"] }}</div>
-      <div><b>رقم المتدرب:</b> {{ trainee["رقم المتدرب"] }}</div>
-      <div><b>التخصص:</b> {{ trainee["التخصص"] }}</div>
-      <div><b>البرنامج:</b> {{ trainee["البرنامج"] }}</div>
-      <div style="margin-top:8px;"><b>إجمالي الفرص لتخصصك:</b> {{ total_slots }} — <b>المتبقي الآن:</b> {{ remaining_slots }}</div>
+    <div class="kv">
+      <div>اسم المتدرب</div><div>{{ trainee["اسم المتدرب"] }}</div>
+      <div>رقم المتدرب</div><div>{{ trainee["رقم المتدرب"] }}</div>
+      <div>التخصص</div><div>{{ trainee["التخصص"] }}</div>
+      {% if trainee.get("برنامج") %}
+        <div>البرنامج</div><div>{{ trainee["برنامج"] }}</div>
+      {% endif %}
+      <div>إجمالي فرص تخصصك</div><div>{{ total_for_spec }}</div>
+      <div>المتبقي الآن</div><div>{{ remaining_for_spec }}</div>
     </div>
 
-    <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
+    <hr>
 
-    <form method="post" action="/choose">
-      <input type="hidden" name="trainee_id" value="{{ trainee['رقم المتدرب'] }}">
+    {% if already_assigned %}
+      <div class="small">
+        تم حجز جهة تدريب لك مسبقًا: <b>{{ already_assigned }}</b>
+      </div>
+      <div class="small" style="margin-top:8px;">
+        إذا تحتاج تغيير، احذف قيدك من assignments.json (يدويًا) أو اطلب مني زر “إلغاء” لاحقًا.
+      </div>
+    {% endif %}
 
-      <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
-      <select name="entity" required>
-        <option value="">— اختر —</option>
-        {% for item in entities %}
-          <option value="{{ item.entity }}">{{ item.entity }} (المتبقي: {{ item.remaining }})</option>
-        {% endfor %}
-      </select>
+    <form method="post" action="/assign/{{ trainee['رقم المتدرب'] }}">
+      <div class="field">
+        <label class="small">اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
+        <select name="entity" required {% if already_assigned %}disabled{% endif %}>
+          <option value="">— اختر —</option>
+          {% for item in options %}
+            <option value="{{ item.entity }}" {% if item.remaining <= 0 %}disabled{% endif %}>
+              {{ item.entity }} (المتبقي: {{ item.remaining }} من {{ item.total }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
 
-      <div style="margin-top:14px;" class="row">
-        <button class="btn" type="submit" name="action" value="save">حفظ الاختيار</button>
-        <button class="btn secondary" type="submit" name="action" value="pdf">PDF طباعة/تحميل</button>
+      <div class="row">
+        <div>
+          <button type="submit" {% if already_assigned %}disabled{% endif %}>طباعة PDF وحجز</button>
+        </div>
       </div>
 
       {% if error %}
-        <div class="msg-error">{{ error }}</div>
-      {% endif %}
-      {% if ok %}
-        <div style="margin-top:12px; color:green; font-weight:bold; text-align:center;">{{ ok }}</div>
+        <div class="error">{{ error }}</div>
       {% endif %}
     </form>
 
