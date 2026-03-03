@@ -1,101 +1,73 @@
-@font-face{
-  font-family: "NotoNaskh";
+@font-face {
+  font-family: "NotoNaskhArabic";
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
 }
 
-html, body{
-  margin:0;
-  padding:0;
-  font-family: "NotoNaskh", Arial, sans-serif;
+body {
+  margin: 0;
+  font-family: "NotoNaskhArabic", Arial, sans-serif;
   direction: rtl;
-  background:#f3f3f3;
+  background: #f4f6f8;
 }
 
-.header-wrap{
+.page-header {
   width: 100%;
-  display:flex;
-  justify-content:center;
-  background:#fff;
+  height: 220px;
+  background-image: url("/static/header.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
-.header-wrap img{
-  width: 100%;
-  max-width: 1200px;
-  height: auto;
-  display:block;
-}
-
-.container{
-  max-width: 900px;
-  margin: 20px auto;
+.container {
+  max-width: 920px;
+  margin: -60px auto 60px auto; /* يطلع البوكس فوق شوي تحت الهيدر */
   padding: 0 16px;
 }
 
-.card{
-  background:#fff;
+.card {
+  background: #fff;
   border-radius: 14px;
-  padding: 18px;
-  box-shadow: 0 10px 30px rgba(0,0,0,.08);
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  padding: 26px;
 }
 
-h1,h2{
-  margin: 0 0 14px 0;
-}
+h1,h2,h3 { margin: 0 0 16px 0; }
 
-.field{
-  margin: 10px 0;
-}
-
-input, select{
-  width: 100%;
-  padding: 12px;
-  border: 1px solid #d0d0d0;
-  border-radius: 10px;
-  font-size: 16px;
-  box-sizing: border-box;
-}
-
-.row{
-  display:flex;
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
-  align-items:center;
 }
 
-.row > div{
-  flex:1;
-}
-
-button{
-  background:#0b1b33;
-  color:#fff;
-  border:0;
-  padding: 12px 18px;
+input, select, button {
+  font-family: "NotoNaskhArabic", Arial, sans-serif;
+  font-size: 18px;
+  padding: 12px 14px;
+  border: 1px solid #cfd6dd;
   border-radius: 10px;
-  cursor:pointer;
-  font-size: 16px;
 }
 
-button:hover{ opacity:.95; }
-
-.error{
-  color:#b00020;
-  margin-top: 10px;
+button {
+  background: #0b1d3a;
+  color: #fff;
+  cursor: pointer;
+  border: none;
 }
 
-.small{
-  color:#333;
-  font-size: 14px;
-}
+button:hover { opacity: .92; }
 
-.kv{
-  display:grid;
-  grid-template-columns: 1fr 2fr;
-  gap: 8px 14px;
-  margin: 10px 0 18px;
-}
+.muted { color: #6b7280; font-size: 14px; }
+.error { color: #b91c1c; font-weight: 700; margin-top: 10px; }
+.success { color: #065f46; font-weight: 700; margin-top: 10px; }
 
-hr{
-  border:0;
-  border-top:1px solid #eee;
-  margin: 16px 0;
+.hr { height:1px; background:#e5e7eb; margin:18px 0; }
+
+.kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin: 6px 0;
 }
+.kv b { color:#111827; }
