@@ -1,6 +1,7 @@
-Flask==3.0.3
-gunicorn==22.0.0
-pandas==2.2.2
-openpyxl==3.1.5
-python-docx==1.1.2
-docxtpl==0.17.0
+Flask==3.0.2
+gunicorn==21.2.0
+pandas==2.2.1
+openpyxl==3.1.2
+reportlab==4.1.0
+arabic-reshaper==3.0.0
+python-bidi==0.4.2
