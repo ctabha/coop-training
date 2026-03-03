@@ -1,76 +1,58 @@
 <!doctype html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
   <meta charset="utf-8">
-  <title>اختيار جهة التدريب</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>لوحة المتدرب</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="page-bg">
+<body>
 
-  <!-- الهيدر في رأس الموقع -->
-  <div class="site-header">
-    <img src="/static/header.jpg" alt="header">
-  </div>
+<header class="site-header">
+  <img src="/static/header.jpg" alt="header">
+</header>
 
+<div class="container">
   <div class="card">
+    <h1>لوحة المتدرب</h1>
 
-    <h1>بوابة التدريب التعاوني</h1>
+    <div class="kv">
+      <div>اسم المتدرب</div><div>{{ trainee.get('اسم المتدرب','') }}</div>
+      <div>رقم المتدرب</div><div>{{ trainee.get('رقم المتدرب','') }}</div>
+      <div>التخصص</div><div>{{ trainee.get('التخصص','') }}</div>
+      <div>البرنامج</div><div>{{ trainee.get('برنامج','') }}</div>
+    </div>
 
-    <p><b>اسم المتدرب:</b> {{ trainee["اسم المتدرب"] }}</p>
-    <p><b>رقم المتدرب:</b> {{ trainee["رقم المتدرب"] }}</p>
-    <p><b>التخصص:</b> {{ specialty }}</p>
+    <div class="small">
+      إجمالي الفرص لتخصصك: <b>{{ total_slots }}</b>
+      — المتبقي الآن: <b>{{ remaining_total }}</b>
+    </div>
 
-    {% if success %}
-      <p class="success">{{ success }}</p>
-    {% endif %}
+    <hr style="border:none;border-top:1px solid #eee;margin:16px 0;">
+
+    <form method="POST" action="/assign">
+      <input type="hidden" name="trainee_id" value="{{ trainee.get('رقم المتدرب','') }}">
+
+      <label class="small">اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
+      <select name="entity" required>
+        <option value="">— اختر —</option>
+        {% for item in entity_options %}
+          <option value="{{ item.entity }}">
+            {{ item.entity }} (المتبقي: {{ item.remaining }})
+          </option>
+        {% endfor %}
+      </select>
+
+      <div style="margin-top:12px">
+        <button type="submit">تأكيد الحجز + طباعة PDF</button>
+      </div>
+    </form>
 
     {% if error %}
-      <p class="error">{{ error }}</p>
+      <div class="error">{{ error }}</div>
     {% endif %}
-
-    {% if existing %}
-      <hr>
-      <p>تم اختيار الجهة:</p>
-      <h3>{{ existing["entity"] }}</h3>
-
-      <br>
-      <a class="btn" href="/download_pdf/{{ trainee['رقم المتدرب'] }}">
-        تحميل خطاب التوجيه PDF
-      </a>
-
-    {% else %}
-
-      <hr>
-
-      {% if available_entities|length == 0 %}
-        <p class="error">لا توجد مقاعد متاحة حالياً لهذا التخصص</p>
-      {% else %}
-
-        <form method="POST">
-
-          <label>اختر جهة التدريب (المقاعد المتبقية بجانبها):</label>
-
-          <select name="entity" required>
-            <option value="">-- اختر --</option>
-
-            {% for item in available_entities %}
-              <option value="{{ item.name }}">
-                {{ item.name }} (متبقي: {{ item.count }})
-              </option>
-            {% endfor %}
-
-          </select>
-
-          <br>
-          <button type="submit">تأكيد الاختيار</button>
-
-        </form>
-
-      {% endif %}
-
-    {% endif %}
-
   </div>
+</div>
 
 </body>
 </html>
