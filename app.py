@@ -1,272 +1,313 @@
-from flask import Flask, render_template, request, redirect, url_for, send_file
-import os, json, tempfile, subprocess
-import pandas as pd
+import os
+import json
+import tempfile
+import subprocess
 from datetime import datetime
+
+from flask import Flask, render_template, request, redirect, url_for, send_file, abort
+import pandas as pd
 from docxtpl import DocxTemplate
 
 app = Flask(__name__)
 
-DATA_DIR = "data"
-STUDENTS_PATH = os.path.join(DATA_DIR, "students.xlsx")
-SLOTS_PATH = os.path.join(DATA_DIR, "slots.json")
-ENTITIES_PATH = os.path.join(DATA_DIR, "entities.json")
-ASSIGNMENTS_PATH = os.path.join(DATA_DIR, "assignments.json")
-TEMPLATE_DOCX_PATH = os.path.join(DATA_DIR, "letter_template.docx")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
+TEMPLATE_DOCX = os.path.join(DATA_DIR, "letter_template.docx")
+
+ENTITIES_JSON = os.path.join(DATA_DIR, "entities.json")
+SLOTS_JSON = os.path.join(DATA_DIR, "slots.json")
+ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
 
 
-# ============ Helpers ============
+# ----------------------------
+# Helpers
+# ----------------------------
+def ensure_files_exist():
+    missing = []
+    for p in [STUDENTS_XLSX, TEMPLATE_DOCX]:
+        if not os.path.exists(p):
+            missing.append(p)
+    if missing:
+        raise FileNotFoundError("ملفات مفقودة: " + " , ".join(missing))
+
+    # إذا ما فيه assignments.json ننشئه
+    if not os.path.exists(ASSIGNMENTS_JSON):
+        with open(ASSIGNMENTS_JSON, "w", encoding="utf-8") as f:
+            json.dump({}, f, ensure_ascii=False, indent=2)
+
+    # entities.json/slots.json اختيارية (سنولدها من الإكسل إذا غير موجودة)
+    if not os.path.exists(ENTITIES_JSON):
+        generate_entities_from_excel()
+
+    if not os.path.exists(SLOTS_JSON):
+        generate_slots_from_excel()
+
+
+def read_students_df():
+    df = pd.read_excel(STUDENTS_XLSX)
+
+    # أسماء الأعمدة الأساسية المطلوبة (عدّلها إذا اسم العمود عندك مختلف)
+    required = ["رقم المتدرب", "رقم الجوال", "اسم المتدرب", "التخصص", "جهة التدريب"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"أعمدة ناقصة في Excel: {', '.join(missing)}")
+
+    # تنظيف بسيط
+    df["رقم المتدرب"] = df["رقم المتدرب"].astype(str).str.strip()
+    df["رقم الجوال"] = df["رقم الجوال"].astype(str).str.strip()
+    df["اسم المتدرب"] = df["اسم المتدرب"].astype(str).str.strip()
+    df["التخصص"] = df["التخصص"].astype(str).str.strip()
+    df["جهة التدريب"] = df["جهة التدريب"].astype(str).str.strip()
+
+    return df
+
+
+def normalize_phone_last4(phone: str) -> str:
+    # نأخذ آخر 4 أرقام فعليًا من الجوال (حتى لو كان فيه + أو مسافات)
+    digits = "".join(ch for ch in str(phone) if ch.isdigit())
+    return digits[-4:] if len(digits) >= 4 else ""
+
+
 def load_json(path, default):
     if not os.path.exists(path):
         return default
     with open(path, "r", encoding="utf-8") as f:
-        try:
-            return json.load(f)
-        except:
-            return default
+        return json.load(f)
 
-def save_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+def save_json(path, obj):
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(obj, f, ensure_ascii=False, indent=2)
 
-def normalize_phone(x):
-    if pd.isna(x):
-        return ""
-    s = str(x).strip().replace(" ", "").replace("-", "")
-    if s.endswith(".0"):
-        s = s[:-2]
-    return "".join(ch for ch in s if ch.isdigit())
 
-def last4_ok(full_phone, last4):
-    p = normalize_phone(full_phone)
-    last4 = str(last4).strip()
-    return len(p) >= 4 and p[-4:] == last4
+def generate_entities_from_excel():
+    df = read_students_df()
+    entities = sorted(set([x for x in df["جهة التدريب"].dropna().tolist() if str(x).strip() != ""]))
+    data = {e: 0 for e in entities}  # نفس شكل ملفك (قيم 0)
+    save_json(ENTITIES_JSON, data)
 
-def read_students_df():
-    if not os.path.exists(STUDENTS_PATH):
-        raise FileNotFoundError(f"students.xlsx غير موجود: {STUDENTS_PATH}")
 
-    df = pd.read_excel(STUDENTS_PATH)
-
-    # عدّل أسماء الأعمدة هنا حسب ملفك لو اختلفت:
-    COL_ID = "رقم المتدرب"
-    COL_PHONE = "رقم الجوال"
-    COL_NAME = "اسم المتدرب"
-    COL_SPEC = "التخصص"
-    COL_ENTITY = "جهة التدريب"   # <<< هذا أهم شيء
-
-    required = [COL_ID, COL_PHONE, COL_NAME, COL_SPEC, COL_ENTITY]
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError("الأعمدة الناقصة في students.xlsx: " + " | ".join(missing))
-
-    df[COL_ID] = df[COL_ID].astype(str).str.strip()
-    df[COL_NAME] = df[COL_NAME].astype(str).str.strip()
-    df[COL_SPEC] = df[COL_SPEC].astype(str).str.strip()
-    df[COL_ENTITY] = df[COL_ENTITY].astype(str).str.strip()
-    df["رقم_الجوال_norm"] = df[COL_PHONE].apply(normalize_phone)
-
-    return df, COL_ID, COL_PHONE, COL_NAME, COL_SPEC, COL_ENTITY
-
-def build_slots_and_entities_from_excel():
+def generate_slots_from_excel():
     """
-    يبني:
-      entities.json = قائمة الجهات
-      slots.json = { تخصص: { جهة: عدد المقاعد } }
-    من students.xlsx تلقائياً
+    المقاعد حسب التخصص = عدد المتدربين في كل تخصص (تقدر تغيّرها لاحقًا)
     """
-    df, COL_ID, COL_PHONE, COL_NAME, COL_SPEC, COL_ENTITY = read_students_df()
+    df = read_students_df()
+    counts = df.groupby("التخصص").size().to_dict()
+    slots = {str(k): int(v) for k, v in counts.items()}
+    save_json(SLOTS_JSON, slots)
 
-    # احذف الصفوف اللي جهة التدريب أو التخصص فاضية
-    df = df[(df[COL_SPEC] != "") & (df[COL_ENTITY] != "")]
 
-    # الجهات
-    entities = sorted(df[COL_ENTITY].dropna().unique().tolist())
-    save_json(ENTITIES_PATH, entities)
-
-    # المقاعد = count لكل (تخصص + جهة)
-    grouped = df.groupby([COL_SPEC, COL_ENTITY]).size().reset_index(name="count")
-
-    slots = {}
-    for _, row in grouped.iterrows():
-        spec = str(row[COL_SPEC]).strip()
-        ent = str(row[COL_ENTITY]).strip()
-        cnt = int(row["count"])
-        slots.setdefault(spec, {})[ent] = cnt
-
-    save_json(SLOTS_PATH, slots)
-
-    # assignments.json إذا غير موجود
-    if not os.path.exists(ASSIGNMENTS_PATH):
-        save_json(ASSIGNMENTS_PATH, {})
-
-def ensure_auto_data_ready():
+def get_remaining_slots(slots, assignments):
     """
-    إذا slots/entities غير موجودة، يولدها من Excel تلقائياً
+    نحسب المتبقي لكل تخصص = slots[spec] - عدد المتدربين الذين تم تثبيت جهة لهم في هذا التخصص
     """
-    if (not os.path.exists(SLOTS_PATH)) or (not os.path.exists(ENTITIES_PATH)):
-        build_slots_and_entities_from_excel()
+    used = {}
+    for trainee_id, rec in assignments.items():
+        spec = rec.get("specialty")
+        entity = rec.get("entity")
+        if spec and entity:
+            used[spec] = used.get(spec, 0) + 1
 
-def libreoffice_docx_to_pdf(docx_path, pdf_path):
-    out_dir = os.path.dirname(pdf_path)
-    os.makedirs(out_dir, exist_ok=True)
-    cmd = ["soffice", "--headless", "--convert-to", "pdf", "--outdir", out_dir, docx_path]
+    remaining = {}
+    for spec, total in slots.items():
+        remaining[spec] = int(total) - int(used.get(spec, 0))
+    return remaining
+
+
+def convert_docx_to_pdf(docx_path, pdf_path):
+    """
+    تحويل DOCX إلى PDF باستخدام LibreOffice (يحتاج تثبيت libreoffice في render-build.sh)
+    """
+    cmd = [
+        "libreoffice",
+        "--headless",
+        "--nologo",
+        "--nofirststartwizard",
+        "--convert-to", "pdf",
+        "--outdir", os.path.dirname(pdf_path),
+        docx_path,
+    ]
     subprocess.check_call(cmd)
+    # LibreOffice يخرج pdf بنفس اسم docx
+    generated = os.path.join(os.path.dirname(pdf_path), os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
+    if not os.path.exists(generated):
+        raise RuntimeError("لم يتم إنشاء PDF بواسطة LibreOffice")
+    os.replace(generated, pdf_path)
 
-    expected = os.path.join(out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
-    if expected != pdf_path:
-        os.replace(expected, pdf_path)
 
-
-# ============ Routes ============
+# ----------------------------
+# Routes
+# ----------------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    ensure_auto_data_ready()
-
     error = None
+    ensure_files_exist()
+
     if request.method == "POST":
         trainee_id = (request.form.get("trainee_id") or "").strip()
         last4 = (request.form.get("last4") or "").strip()
-        if not trainee_id or not last4:
-            return render_template("index.html", error="فضلاً أدخل رقم المتدرب وآخر 4 أرقام من الجوال")
 
-        df, COL_ID, COL_PHONE, COL_NAME, COL_SPEC, COL_ENTITY = read_students_df()
-        row = df[df[COL_ID] == trainee_id]
+        if not trainee_id or not last4:
+            error = "فضلاً أدخل رقم المتدرب وآخر 4 أرقام من الجوال"
+            return render_template("index.html", error=error)
+
+        df = read_students_df()
+        row = df[df["رقم المتدرب"] == trainee_id]
         if row.empty:
-            return render_template("index.html", error="لم يتم العثور على رقم المتدرب")
+            error = "رقم المتدرب غير موجود"
+            return render_template("index.html", error=error)
 
         trainee = row.iloc[0].to_dict()
-        if not last4_ok(trainee["رقم_الجوال_norm"], last4):
-            return render_template("index.html", error="آخر 4 أرقام من الجوال غير صحيحة")
+        expected_last4 = normalize_phone_last4(trainee.get("رقم الجوال", ""))
 
-        return redirect(url_for("dashboard", trainee_id=trainee_id, last4=last4))
+        if expected_last4 != last4:
+            error = "آخر 4 أرقام من الجوال غير صحيحة"
+            return render_template("index.html", error=error)
+
+        return redirect(url_for("dashboard", trainee_id=trainee_id))
 
     return render_template("index.html", error=error)
 
-@app.route("/dashboard", methods=["GET", "POST"])
-def dashboard():
-    ensure_auto_data_ready()
 
-    trainee_id = (request.args.get("trainee_id") or "").strip()
-    last4 = (request.args.get("last4") or "").strip()
-    if not trainee_id or not last4:
-        return redirect(url_for("index"))
+@app.route("/dashboard/<trainee_id>", methods=["GET", "POST"])
+def dashboard(trainee_id):
+    ensure_files_exist()
 
-    df, COL_ID, COL_PHONE, COL_NAME, COL_SPEC, COL_ENTITY = read_students_df()
-    row = df[df[COL_ID] == trainee_id]
+    df = read_students_df()
+    row = df[df["رقم المتدرب"] == str(trainee_id)]
     if row.empty:
-        return redirect(url_for("index"))
+        return "متدرب غير موجود", 404
 
     trainee = row.iloc[0].to_dict()
-    if not last4_ok(trainee["رقم_الجوال_norm"], last4):
-        return redirect(url_for("index"))
+    specialty = str(trainee.get("التخصص", "")).strip()
 
-    specialty = str(trainee[COL_SPEC]).strip()
+    entities_dict = load_json(ENTITIES_JSON, {})
+    slots = load_json(SLOTS_JSON, {})
+    assignments = load_json(ASSIGNMENTS_JSON, {})
 
-    entities = load_json(ENTITIES_PATH, [])
-    slots = load_json(SLOTS_PATH, {})
-    assignments = load_json(ASSIGNMENTS_PATH, {})
+    # إعادة توليد تلقائي إذا صارت الملفات فاضية/غير منطقية
+    if not entities_dict:
+        generate_entities_from_excel()
+        entities_dict = load_json(ENTITIES_JSON, {})
+    if not slots:
+        generate_slots_from_excel()
+        slots = load_json(SLOTS_JSON, {})
 
-    existing = assignments.get(trainee_id)
+    remaining = get_remaining_slots(slots, assignments)
+    remaining_for_spec = remaining.get(specialty, 0)
 
-    specialty_slots = slots.get(specialty, {})
-    available_entities = []
-    for ent in entities:
-        c = int(specialty_slots.get(ent, 0) or 0)
-        if c > 0:
-            available_entities.append({"name": ent, "count": c})
-
-    error = None
-    success = None
+    chosen = assignments.get(str(trainee_id))
 
     if request.method == "POST":
-        chosen_entity = (request.form.get("entity") or "").strip()
+        entity = (request.form.get("entity") or "").strip()
 
-        if existing:
-            error = "تم اختيار جهة مسبقاً ولا يمكن التغيير."
-        else:
-            if not chosen_entity:
-                error = "اختر جهة التدريب"
-            else:
-                current = int(specialty_slots.get(chosen_entity, 0) or 0)
-                if current <= 0:
-                    error = "لا توجد مقاعد متاحة لهذه الجهة ضمن تخصصك"
-                else:
-                    # ينقص المقعد
-                    specialty_slots[chosen_entity] = current - 1
-                    slots[specialty] = specialty_slots
-                    save_json(SLOTS_PATH, slots)
+        if remaining_for_spec <= 0:
+            return render_template(
+                "dashboard.html",
+                trainee=trainee,
+                entities=list(entities_dict.keys()),
+                remaining_for_spec=remaining_for_spec,
+                specialty=specialty,
+                chosen=chosen,
+                error="لا توجد مقاعد متبقية لهذا التخصص"
+            )
 
-                    assignments[trainee_id] = {
-                        "trainee_id": trainee_id,
-                        "trainee_name": trainee[COL_NAME],
-                        "specialty": specialty,
-                        "phone": trainee["رقم_الجوال_norm"],
-                        "entity": chosen_entity,
-                        "chosen_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    save_json(ASSIGNMENTS_PATH, assignments)
+        if not entity or entity not in entities_dict:
+            return render_template(
+                "dashboard.html",
+                trainee=trainee,
+                entities=list(entities_dict.keys()),
+                remaining_for_spec=remaining_for_spec,
+                specialty=specialty,
+                chosen=chosen,
+                error="اختر جهة صحيحة"
+            )
 
-                    success = "تم حفظ اختيارك بنجاح ✅"
-                    existing = assignments.get(trainee_id)
+        # إذا المتدرب اختار من قبل، لا ننقص مرتين
+        if chosen and chosen.get("entity"):
+            # تحديث الجهة فقط بدون إنقاص إضافي؟ (هنا نمنع العبث)
+            return render_template(
+                "dashboard.html",
+                trainee=trainee,
+                entities=list(entities_dict.keys()),
+                remaining_for_spec=remaining_for_spec,
+                specialty=specialty,
+                chosen=chosen,
+                error="تم تثبيت اختيارك مسبقًا. إذا تريد تعديل النظام للسماح بالتعديل قل لي."
+            )
 
-                    # تحديث القائمة
-                    specialty_slots = slots.get(specialty, {})
-                    available_entities = []
-                    for ent in entities:
-                        c = int(specialty_slots.get(ent, 0) or 0)
-                        if c > 0:
-                            available_entities.append({"name": ent, "count": c})
+        assignments[str(trainee_id)] = {
+            "trainee_id": str(trainee_id),
+            "name": trainee.get("اسم المتدرب", ""),
+            "specialty": specialty,
+            "entity": entity,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+        save_json(ASSIGNMENTS_JSON, assignments)
+
+        # بعد الحفظ نعيد حساب المتبقي
+        remaining = get_remaining_slots(slots, assignments)
+        remaining_for_spec = remaining.get(specialty, 0)
+        chosen = assignments.get(str(trainee_id))
 
     return render_template(
         "dashboard.html",
         trainee=trainee,
+        entities=list(entities_dict.keys()),
+        remaining_for_spec=remaining_for_spec,
         specialty=specialty,
-        existing=existing,
-        available_entities=available_entities,
-        error=error,
-        success=success,
-        trainee_id=trainee_id,
-        last4=last4
+        chosen=chosen,
+        error=None
     )
 
-@app.route("/download_pdf/<trainee_id>")
-def download_pdf(trainee_id):
-    ensure_auto_data_ready()
 
-    assignments = load_json(ASSIGNMENTS_PATH, {})
-    info = assignments.get(trainee_id)
-    if not info:
-        return "لا يوجد تعيين لهذا المتدرب", 404
+@app.route("/download/<trainee_id>", methods=["GET"])
+def download(trainee_id):
+    ensure_files_exist()
 
-    if not os.path.exists(TEMPLATE_DOCX_PATH):
-        return "ملف قالب الوورد غير موجود data/letter_template.docx", 500
+    assignments = load_json(ASSIGNMENTS_JSON, {})
+    rec = assignments.get(str(trainee_id))
+    if not rec or not rec.get("entity"):
+        return "لا يوجد اختيار جهة لهذا المتدرب", 400
 
-    tpl = DocxTemplate(TEMPLATE_DOCX_PATH)
+    df = read_students_df()
+    row = df[df["رقم المتدرب"] == str(trainee_id)]
+    if row.empty:
+        return "متدرب غير موجود", 404
+    trainee = row.iloc[0].to_dict()
+
+    # تعبئة قالب الوورد (عدّل أسماء الحقول لتطابق placeholders في letter_template.docx)
+    tpl = DocxTemplate(TEMPLATE_DOCX)
     context = {
-        "TraineeName": info.get("trainee_name", ""),
-        "AcademicID": info.get("trainee_id", ""),
-        "Phone": info.get("phone", ""),
-        "Specialty": info.get("specialty", ""),
-        "Company": info.get("entity", ""),
-        "LetterNo": info.get("trainee_id", ""),
-        "course_ref": "",
-        "college_supervisor": ""
+        "TraineeName": trainee.get("اسم المتدرب", ""),
+        "AcademicID": trainee.get("رقم المتدرب", ""),
+        "Specialty": trainee.get("التخصص", ""),
+        "Phone": trainee.get("رقم الجوال", ""),
+        "Company": rec.get("entity", ""),
+        "LetterNo": trainee.get("رقم المتدرب", ""),  # مثال: تقدر تغيّره
     }
+    tpl.render(context)
 
     with tempfile.TemporaryDirectory() as tmp:
         out_docx = os.path.join(tmp, f"letter_{trainee_id}.docx")
         out_pdf = os.path.join(tmp, f"letter_{trainee_id}.pdf")
-
-        tpl.render(context)
         tpl.save(out_docx)
 
+        # نحاول PDF (إذا LibreOffice موجود)
         try:
-            libreoffice_docx_to_pdf(out_docx, out_pdf)
-        except Exception as e:
-            return f"فشل تحويل PDF: {e}", 500
+            convert_docx_to_pdf(out_docx, out_pdf)
+            return send_file(out_pdf, as_attachment=True, download_name=f"خطاب_توجيه_{trainee_id}.pdf")
+        except Exception:
+            # fallback: نرجع DOCX بدل ما نخلي المستخدم بدون ملف
+            return send_file(out_docx, as_attachment=True, download_name=f"خطاب_توجيه_{trainee_id}.docx")
 
-        return send_file(out_pdf, as_attachment=True, download_name=f"خطاب_توجيه_{trainee_id}.pdf")
+
+@app.route("/health")
+def health():
+    return "ok", 200
 
 
 if __name__ == "__main__":
