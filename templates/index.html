@@ -1,28 +1,43 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>بوابة التدريب التعاوني</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
-<body class="page-bg">
-  <header class="top-header">
-    <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="header">
-  </header>
+<body>
 
-  <main class="card">
-    <h1 class="title">بوابة خطاب التوجيه - التدريب التعاوني</h1>
+<header class="site-header">
+  <img src="/static/header.jpg" alt="Header">
+</header>
 
-    <form method="post" class="form">
-      <input name="trainee_id" class="input" placeholder="الرقم التدريبي / رقم المتدرب" />
-      <input name="last4" class="input" placeholder="آخر 4 أرقام من الجوال" />
-      <button class="btn" type="submit">دخول</button>
+<div class="page">
+  <div class="card">
+    <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
+
+    <form method="post">
+      <div class="row">
+        <div class="col">
+          <label>الرقم التدريبي / رقم المتدرب</label>
+          <input name="trainee_id" required>
+        </div>
+        <div class="col">
+          <label>آخر 4 أرقام من الجوال</label>
+          <input name="last4" required>
+        </div>
+      </div>
+
+      <div style="margin-top:14px; text-align:center;">
+        <button class="btn" type="submit">دخول</button>
+      </div>
 
       {% if error %}
-        <div class="error">{{ error }}</div>
+        <div class="msg-error">{{ error }}</div>
       {% endif %}
     </form>
-  </main>
+  </div>
+</div>
+
 </body>
 </html>
