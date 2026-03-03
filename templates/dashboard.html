@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -9,48 +9,47 @@
 <body>
 
 <header class="site-header">
-  <img src="/static/header.jpg" alt="header">
+  <img src="/static/header.jpg" alt="Header">
 </header>
 
-<div class="container">
+<div class="page">
   <div class="card">
-    <h1>لوحة المتدرب</h1>
-
-    <div class="kv">
-      <div>اسم المتدرب</div><div>{{ trainee.get('اسم المتدرب','') }}</div>
-      <div>رقم المتدرب</div><div>{{ trainee.get('رقم المتدرب','') }}</div>
-      <div>التخصص</div><div>{{ trainee.get('التخصص','') }}</div>
-      <div>البرنامج</div><div>{{ trainee.get('برنامج','') }}</div>
-    </div>
+    <h2>لوحة المتدرب</h2>
 
     <div class="small">
-      إجمالي الفرص لتخصصك: <b>{{ total_slots }}</b>
-      — المتبقي الآن: <b>{{ remaining_total }}</b>
+      <div><b>اسم المتدرب:</b> {{ trainee["اسم المتدرب"] }}</div>
+      <div><b>رقم المتدرب:</b> {{ trainee["رقم المتدرب"] }}</div>
+      <div><b>التخصص:</b> {{ trainee["التخصص"] }}</div>
+      <div><b>البرنامج:</b> {{ trainee["البرنامج"] }}</div>
+      <div style="margin-top:8px;"><b>إجمالي الفرص لتخصصك:</b> {{ total_slots }} — <b>المتبقي الآن:</b> {{ remaining_slots }}</div>
     </div>
 
-    <hr style="border:none;border-top:1px solid #eee;margin:16px 0;">
+    <hr style="margin:16px 0; border:none; border-top:1px solid #eee;">
 
-    <form method="POST" action="/assign">
-      <input type="hidden" name="trainee_id" value="{{ trainee.get('رقم المتدرب','') }}">
+    <form method="post" action="/choose">
+      <input type="hidden" name="trainee_id" value="{{ trainee['رقم المتدرب'] }}">
 
-      <label class="small">اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
+      <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
       <select name="entity" required>
         <option value="">— اختر —</option>
-        {% for item in entity_options %}
-          <option value="{{ item.entity }}">
-            {{ item.entity }} (المتبقي: {{ item.remaining }})
-          </option>
+        {% for item in entities %}
+          <option value="{{ item.entity }}">{{ item.entity }} (المتبقي: {{ item.remaining }})</option>
         {% endfor %}
       </select>
 
-      <div style="margin-top:12px">
-        <button type="submit">تأكيد الحجز + طباعة PDF</button>
+      <div style="margin-top:14px;" class="row">
+        <button class="btn" type="submit" name="action" value="save">حفظ الاختيار</button>
+        <button class="btn secondary" type="submit" name="action" value="pdf">PDF طباعة/تحميل</button>
       </div>
+
+      {% if error %}
+        <div class="msg-error">{{ error }}</div>
+      {% endif %}
+      {% if ok %}
+        <div style="margin-top:12px; color:green; font-weight:bold; text-align:center;">{{ ok }}</div>
+      {% endif %}
     </form>
 
-    {% if error %}
-      <div class="error">{{ error }}</div>
-    {% endif %}
   </div>
 </div>
 
