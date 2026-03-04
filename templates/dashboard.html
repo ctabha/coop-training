@@ -1,27 +1,74 @@
 <!doctype html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>لوحة المتدرب</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="page-header"></div>
+  <div class="header">
+    <img src="/static/header.jpg" alt="Header">
+  </div>
 
   <div class="container">
     <div class="card">
-      <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
-      <p class="muted">أدخل رقم المتدرب + آخر 4 أرقام من رقم الجوال للتأكيد</p>
+      <h1>لوحة المتدرب</h1>
 
-      <form method="POST" class="form-row">
-        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
-        <input name="last4" placeholder="آخر 4 أرقام من الجوال" required>
-        <button type="submit">دخول</button>
-      </form>
+      <div class="row">
+        <div style="flex:1; min-width:260px;">
+          <div><b>اسم المتدرب:</b> {{ trainee['اسم المتدرب'] }}</div>
+          <div><b>رقم المتدرب:</b> {{ trainee['رقم المتدرب'] }}</div>
+          <div><b>التخصص:</b> {{ trainee['التخصص'] }}</div>
+          <div><b>البرنامج:</b> {{ trainee.get('برنامج','') }}</div>
+        </div>
 
-      {% if error %}
-        <div class="error">{{ error }}</div>
+        <div style="flex:1; min-width:260px;">
+          <div class="badge">إجمالي فرص تخصصك: {{ total_spec }}</div>
+          <div style="margin-top:8px;" class="badge">المتبقي الآن: {{ remaining_spec }}</div>
+        </div>
+      </div>
+
+      <hr style="margin:18px 0; border:0; border-top:1px solid #eee;">
+
+      {% if assigned %}
+        <div class="success">
+          تم الحجز مسبقاً ✅
+        </div>
+        <div style="margin-top:8px;">
+          <b>الجهة المختارة:</b> {{ assigned['entity'] }}
+        </div>
+
+        <div style="margin-top:14px;">
+          <a href="/download/{{ trainee['رقم المتدرب'] }}">
+            <button type="button" class="secondary">تحميل PDF</button>
+          </a>
+        </div>
+
+      {% else %}
+        <form method="post" action="/assign/{{ trainee['رقم المتدرب'] }}">
+          <label><b>اختر جهة التدريب</b> <span class="small">(يظهر المتبقي لكل جهة)</span></label>
+          <div class="row" style="margin-top:8px;">
+            <div class="input">
+              <select name="entity" required>
+                <option value="">— اختر —</option>
+                {% for item in entities %}
+                  <option value="{{ item['name'] }}">{{ item['name'] }} (المتبقي: {{ item['remaining'] }})</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div style="align-self:end;">
+              <button type="submit">حجز + طباعة PDF</button>
+            </div>
+          </div>
+
+          {% if error %}
+            <div class="error">{{ error }}</div>
+          {% endif %}
+          {% if msg %}
+            <div class="success">{{ msg }}</div>
+          {% endif %}
+        </form>
       {% endif %}
     </div>
   </div>
