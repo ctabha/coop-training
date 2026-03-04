@@ -3,30 +3,28 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <title>بوابة التدريب التعاوني</title>
+  <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-
   <div class="page">
-    <div class="header-wrap">
-      <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="header">
+    <div class="header">
+      <img src="/static/header.jpg" alt="header">
     </div>
 
     <div class="card">
       <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-      {% if error %}
-        <p class="error">{{ error }}</p>
-      {% endif %}
-
-      <form method="post">
-        <input type="text" name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
-        <input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required>
+      <form method="post" class="form">
+        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" autocomplete="off" />
+        <input name="last4" placeholder="آخر 4 أرقام من الجوال" autocomplete="off" />
         <button type="submit">دخول</button>
       </form>
+
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
     </div>
   </div>
-
 </body>
 </html>
