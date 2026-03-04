@@ -2,67 +2,55 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <title>لوحة المتدرب</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
-  <div class="page">
-    <div class="header-wrap">
-      <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="header">
-    </div>
+  <!-- الهيدر أعلى الصفحة -->
+  <div class="page-header">
+    <img src="/static/header.jpg" alt="header" class="header-img">
+  </div>
 
-    <div class="card">
-      <h1>لوحة المتدرب</h1>
+  <div class="card">
+    <h2>لوحة المتدرب</h2>
 
-      {% if error %}
-        <p class="error">{{ error }}</p>
-      {% endif %}
+    {% if error %}
+      <p class="error">{{ error }}</p>
+    {% endif %}
 
-      {% if msg %}
-        <p class="msg">{{ msg }}</p>
-      {% endif %}
-
+    {% if trainee %}
       <div class="info">
-        <div><b>اسم المتدرب</b><br>{{ student.name }}</div>
-        <div><b>رقم المتدرب</b><br>{{ student.id }}</div>
-        <div><b>التخصص</b><br>{{ student.spec }}</div>
-        {% if total_for_spec is defined %}
-        <div><b>إجمالي فرص تخصصك</b><br>{{ total_for_spec }}</div>
-        <div><b>المتبقي الآن</b><br>{{ remaining_total }}</div>
-        {% endif %}
+        <div>اسم المتدرب: <b>{{ trainee["اسم المتدرب"] }}</b></div>
+        <div>رقم المتدرب: <b>{{ trainee["رقم المتدرب"] }}</b></div>
+        <div>التخصص: <b>{{ trainee["التخصص"] }}</b></div>
+        <div>إجمالي الفرص لتخصصك: <b>{{ total_spec }}</b> — المتبقي الآن: <b>{{ remaining_spec_total }}</b></div>
       </div>
 
       <hr>
 
-      {% if already and already.entity %}
-        <p>تم تسجيل جهة تدريب مسبقاً: <b>{{ already.entity }}</b></p>
-        <p>لا يمكن التعديل بعد الحجز.</p>
+      {% if my_assignment %}
+        <p>✅ تم اختيار الجهة مسبقاً: <b>{{ my_assignment["entity"] }}</b></p>
+        <a class="btn" href="/pdf/{{ trainee['رقم المتدرب'] }}">تحميل خطاب PDF</a>
       {% else %}
+        <form method="POST" action="/choose/{{ trainee['رقم المتدرب'] }}">
+          <label>اختر جهة التدريب (يظهر المتبقي لكل جهة):</label>
+          <select name="entity" required>
+            <option value="">— اختر —</option>
+            {% for o in options %}
+              {% if o.remaining > 0 %}
+                <option value="{{ o.entity }}">{{ o.entity }} (المتبقي: {{ o.remaining }})</option>
+              {% endif %}
+            {% endfor %}
+          </select>
 
-        {% if entities|length == 0 %}
-          <p>لا توجد جهات تدريب متاحة حالياً.</p>
-        {% else %}
-          <form method="post">
-            <label for="entity">اختر جهة التدريب (يظهر المتبقي لكل جهة):</label>
-            <select name="entity" id="entity" required>
-              <option value="">— اختر —</option>
-              {% for e, r, t in entities %}
-                <option value="{{ e }}">{{ e }} (المتبقي: {{ r }} / {{ t }})</option>
-              {% endfor %}
-            </select>
+          <button class="btn" type="submit">تأكيد الاختيار</button>
+        </form>
 
-            <button type="submit">PDF حجز + طباعة</button>
-          </form>
-        {% endif %}
-
+        <p class="hint">بعد التأكيد ستتناقص الفرص تلقائياً لجميع المتدربين.</p>
       {% endif %}
 
-      <div style="margin-top:16px;">
-        <a href="{{ url_for('index') }}">رجوع للصفحة الرئيسية</a>
-      </div>
-    </div>
+    {% endif %}
   </div>
 
 </body>
