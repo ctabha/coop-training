@@ -1,43 +1,32 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <title>بوابة التدريب التعاوني</title>
-  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="header">
-    <img src="/static/header.jpg" alt="Header">
-  </div>
 
-  <div class="container">
+  <div class="page">
+    <div class="header-wrap">
+      <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="header">
+    </div>
+
     <div class="card">
       <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-      <form method="post" action="/">
-        <div class="row">
-          <div class="input">
-            <input name="trainee_id" placeholder="رقم المتدرب / الرقم التدريبي" value="{{ trainee_id or '' }}">
-          </div>
-          <div class="input">
-            <input name="last4" placeholder="آخر 4 أرقام من الجوال" value="{{ last4 or '' }}">
-          </div>
-        </div>
+      {% if error %}
+        <p class="error">{{ error }}</p>
+      {% endif %}
 
-        <div style="margin-top:12px;">
-          <button type="submit">دخول</button>
-        </div>
-
-        {% if error %}
-          <div class="error">{{ error }}</div>
-        {% endif %}
+      <form method="post">
+        <input type="text" name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
+        <input type="text" name="last4" placeholder="آخر 4 أرقام من الجوال" required>
+        <button type="submit">دخول</button>
       </form>
-
-      <div class="small" style="margin-top:14px;">
-        ملاحظة: يعتمد النظام على ملف <b>data/students.xlsx</b>
-      </div>
     </div>
   </div>
+
 </body>
 </html>
