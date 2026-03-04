@@ -1,104 +1,91 @@
-@font-face {
+@font-face{
   font-family: "NotoNaskhArabic";
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
+  font-display: swap;
 }
 
-html, body {
-  margin: 0;
-  padding: 0;
-  background: #f4f5f7;
-  font-family: "NotoNaskhArabic", serif;
-  direction: rtl;
+body{
+  margin:0;
+  font-family: "NotoNaskhArabic", Arial, sans-serif;
+  background:#f6f6f6;
 }
 
-.header {
-  width: 100%;
-  background: white;
-  border-bottom: 1px solid #eee;
+.page{
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
 }
 
-.header img {
-  width: 100%;
-  height: auto;
-  display: block;
+.header-wrap{
+  width:100%;
+  background:#fff;
 }
 
-.container {
-  max-width: 980px;
-  margin: 24px auto;
-  padding: 0 16px;
+.header-img{
+  width:100%;
+  max-height:280px;
+  object-fit:cover;
+  display:block;
 }
 
-.card {
-  background: white;
-  border-radius: 14px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.08);
-  padding: 22px;
+.card{
+  width:min(900px, 92%);
+  background:#fff;
+  margin:24px 0 40px;
+  padding:22px;
+  border-radius:16px;
+  box-shadow:0 10px 30px rgba(0,0,0,.08);
 }
 
-h1, h2 {
-  margin: 0 0 14px 0;
+h1{
+  margin:0 0 18px;
 }
 
-.row {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
+form{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
 }
 
-.input {
-  flex: 1;
-  min-width: 260px;
+input, select{
+  padding:12px 14px;
+  border:1px solid #d0d0d0;
+  border-radius:10px;
+  font-size:16px;
 }
 
-input, select {
-  width: 100%;
-  padding: 12px 12px;
-  border: 1px solid #d7d7d7;
-  border-radius: 10px;
-  font-family: "NotoNaskhArabic", serif;
-  font-size: 16px;
-  box-sizing: border-box;
+button{
+  padding:12px 14px;
+  border:none;
+  border-radius:10px;
+  background:#0b1a33;
+  color:#fff;
+  font-size:16px;
+  cursor:pointer;
 }
 
-button {
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 10px;
-  background: #0b1a33;
-  color: white;
-  cursor: pointer;
-  font-size: 16px;
-  font-family: "NotoNaskhArabic", serif;
+button:hover{
+  opacity:.95;
 }
 
-button.secondary {
-  background: #2e3a52;
+.error{
+  color:#c0392b;
+  margin:0 0 10px;
 }
 
-.error {
-  color: #b00020;
-  margin-top: 10px;
-  font-weight: 700;
+.msg{
+  color:#2c3e50;
+  margin:0 0 10px;
 }
 
-.success {
-  color: #0b7a28;
-  margin-top: 10px;
-  font-weight: 700;
+.info{
+  display:grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap:14px;
+  font-size:16px;
 }
 
-.small {
-  color: #666;
-  font-size: 14px;
-}
-
-.badge {
-  display: inline-block;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #1f2a5a;
-  font-weight: 700;
-  font-size: 14px;
+@media (max-width: 700px){
+  .info{ grid-template-columns: 1fr; }
 }
