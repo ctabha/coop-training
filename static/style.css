@@ -1,104 +1,47 @@
-@font-face{
+@font-face {
   font-family: "NotoNaskhArabic";
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
-  font-weight: normal;
-  font-style: normal;
 }
-
-*{ box-sizing: border-box; }
 
 body{
-  margin: 0;
-  background: #f3f4f6;
-  font-family: "NotoNaskhArabic", Arial, sans-serif;
+font-family:"NotoNaskhArabic",Arial;
+direction:rtl;
+background:#f5f5f5;
+margin:0;
 }
 
-.page{
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 16px;
+.header img{
+width:100%;
 }
 
-.header{
-  width: 100%;
-  height: auto;
-  display: block;
-  border-radius: 10px;
-  background: white;
+.container{
+width:900px;
+margin:auto;
+margin-top:30px;
 }
 
 .card{
-  margin-top: 16px;
-  background: white;
-  border-radius: 14px;
-  padding: 18px;
-  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
+background:white;
+padding:25px;
+border-radius:12px;
+box-shadow:0 5px 15px rgba(0,0,0,0.1);
 }
 
-h1{
-  margin: 0 0 14px 0;
-  font-size: 26px;
-}
-
-label{
-  display: block;
-  margin-top: 10px;
-  margin-bottom: 6px;
-  color: #111827;
-}
-
-input, select{
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 10px;
-  font-size: 16px;
+input,select,button{
+width:100%;
+padding:10px;
+margin-top:10px;
+border-radius:8px;
+border:1px solid #ccc;
+font-family:"NotoNaskhArabic";
 }
 
 button{
-  margin-top: 14px;
-  width: 100%;
-  padding: 12px 14px;
-  border: 0;
-  border-radius: 10px;
-  background: #0b1b34;
-  color: white;
-  font-size: 16px;
-  cursor: pointer;
+background:#0b1a33;
+color:white;
+cursor:pointer;
 }
 
 button:hover{
-  opacity: 0.92;
-}
-
-.info{
-  line-height: 1.9;
-}
-
-.msgs{ margin: 10px 0; }
-.msg{
-  padding: 10px 12px;
-  border-radius: 10px;
-  margin-bottom: 8px;
-  font-size: 14px;
-}
-.msg.error{ background: #fee2e2; color: #991b1b; }
-.msg.ok{ background: #dcfce7; color: #166534; }
-
-.actions{
-  display: flex;
-  gap: 10px;
-  margin-top: 12px;
-  flex-wrap: wrap;
-}
-.btn{
-  display: inline-block;
-  padding: 10px 14px;
-  border-radius: 10px;
-  background: #0b1b34;
-  color: white;
-  text-decoration: none;
-}
-.btn.danger, .danger{
-  background: #b91c1c;
+opacity:.9;
 }
