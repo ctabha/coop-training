@@ -1,61 +1,69 @@
 <!doctype html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8">
-<title>لوحة المتدرب</title>
-<link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>لوحة المتدرب</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-
 <body>
 
-<div class="header">
-<img src="/static/header.jpg">
-</div>
+<div class="page">
+  <header class="top">
+    <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="Header">
+  </header>
 
-<div class="container">
+  <main class="card">
+    <h1>لوحة المتدرب</h1>
 
-<div class="card">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        <div class="alert">
+          {% for m in messages %}
+            <div>{{ m }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
 
-<h2>بيانات المتدرب</h2>
+    <div class="info">
+      <div><b>اسم المتدرب:</b> {{ student.trainee_name }}</div>
+      <div><b>رقم المتدرب:</b> {{ student.trainee_id }}</div>
+      <div><b>التخصص:</b> {{ student.spec }}</div>
+      <div><b>البرنامج:</b> {{ student.program }}</div>
+      <div><b>إجمالي الفرص لتخصصك:</b> {{ total_remaining }}</div>
+      {% if existing_entity %}
+        <div class="badge">تم اختيار: {{ existing_entity }}</div>
+      {% endif %}
+    </div>
 
-<p>الاسم: {{trainee.name}}</p>
-<p>رقم المتدرب: {{trainee.trainee_id}}</p>
-<p>رقم الجوال: {{trainee.phone}}</p>
-<p>التخصص: {{trainee.specialty}}</p>
-<p>البرنامج: {{trainee.program}}</p>
+    <hr>
 
-<hr>
+    <form method="post" action="{{ url_for('choose', trainee_id=student.trainee_id) }}" class="form">
+      <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
+      <select name="training_entity">
+        <option value="">— اختر —</option>
+        {% for x in remaining_list %}
+          <option value="{{ x.entity }}">
+            {{ x.entity }} (المتبقي: {{ x.remaining }} / الإجمالي: {{ x.total }})
+          </option>
+        {% endfor %}
+      </select>
 
-{% if chosen %}
+      <div style="display:flex; gap:10px; flex-wrap:wrap;">
+        <button type="submit">تأكيد الاختيار</button>
 
-<p>تم اختيار جهة التدريب: {{chosen}}</p>
+        <button type="submit" name="auto_pick" value="1">
+          اختيار تلقائي (أول جهة فيها فرص)
+        </button>
 
-<a href="/pdf/{{trainee.trainee_id}}">
-<button>تحميل خطاب التوجيه PDF</button>
-</a>
+        <a class="btn" href="{{ url_for('download_letter', trainee_id=student.trainee_id) }}">
+          تحميل خطاب التوجيه (Word)
+        </a>
+      </div>
+    </form>
 
-{% else %}
-
-<form method="post" action="/choose/{{trainee.trainee_id}}">
-
-<select name="entity" required>
-
-<option value="">اختر جهة التدريب</option>
-
-{% for e in entities %}
-<option value="{{e}}">{{e}}</option>
-{% endfor %}
-
-</select>
-
-<button type="submit">تأكيد الاختيار</button>
-
-</form>
-
-{% endif %}
-
-</div>
-
+  </main>
 </div>
 
 </body>
