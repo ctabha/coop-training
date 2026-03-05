@@ -3,27 +3,35 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
-  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="page">
-    <div class="header">
-      <img src="/static/header.jpg" alt="header">
-    </div>
+    <img class="header" src="{{ url_for('static', filename='header.jpg') }}" alt="header" />
 
     <div class="card">
       <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-      <form method="post" class="form">
-        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" autocomplete="off" />
-        <input name="last4" placeholder="آخر 4 أرقام من الجوال" autocomplete="off" />
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="msgs">
+            {% for cat, msg in messages %}
+              <div class="msg {{cat}}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <form method="POST" action="/">
+        <label>الرقم التدريبي / رقم المتدرب</label>
+        <input name="trainee_id" placeholder="مثال: 444242291" required>
+
+        <label>آخر 4 أرقام من الجوال</label>
+        <input name="last4" placeholder="مثال: 5513" required>
+
         <button type="submit">دخول</button>
       </form>
-
-      {% if error %}
-        <div class="error">{{ error }}</div>
-      {% endif %}
     </div>
   </div>
 </body>
