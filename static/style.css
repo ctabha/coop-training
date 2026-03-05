@@ -1,73 +1,104 @@
-@font-face {
+@font-face{
   font-family: "NotoNaskhArabic";
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
 }
 
-* { box-sizing: border-box; }
+*{ box-sizing: border-box; }
 
-body {
+body{
   margin: 0;
-  background: #f6f7fb;
-  font-family: "NotoNaskhArabic", Tahoma, Arial, sans-serif;
+  background: #f3f4f6;
+  font-family: "NotoNaskhArabic", Arial, sans-serif;
 }
 
-.page {
-  min-height: 100vh;
+.page{
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
 }
 
-.header img {
+.header{
   width: 100%;
   height: auto;
   display: block;
+  border-radius: 10px;
+  background: white;
 }
 
-.card {
-  max-width: 900px;
-  margin: 24px auto;
-  background: #fff;
+.card{
+  margin-top: 16px;
+  background: white;
   border-radius: 14px;
-  padding: 22px;
-  box-shadow: 0 8px 30px rgba(0,0,0,.08);
+  padding: 18px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.08);
 }
 
-h1 {
-  margin: 0 0 18px;
-  text-align: center;
+h1{
+  margin: 0 0 14px 0;
+  font-size: 26px;
 }
 
-.form {
-  display: grid;
-  gap: 12px;
+label{
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 6px;
+  color: #111827;
 }
 
-input, select {
-  padding: 12px 14px;
-  border: 1px solid #d7d9e0;
+input, select{
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
   border-radius: 10px;
   font-size: 16px;
 }
 
-button {
+button{
+  margin-top: 14px;
+  width: 100%;
   padding: 12px 14px;
-  border: none;
+  border: 0;
   border-radius: 10px;
-  background: #0a1a33;
-  color: #fff;
+  background: #0b1b34;
+  color: white;
   font-size: 16px;
   cursor: pointer;
 }
 
-.error {
+button:hover{
+  opacity: 0.92;
+}
+
+.info{
+  line-height: 1.9;
+}
+
+.msgs{ margin: 10px 0; }
+.msg{
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+.msg.error{ background: #fee2e2; color: #991b1b; }
+.msg.ok{ background: #dcfce7; color: #166534; }
+
+.actions{
+  display: flex;
+  gap: 10px;
   margin-top: 12px;
-  color: #b00020;
-  text-align: center;
+  flex-wrap: wrap;
 }
-
-.ok {
-  color: #0a7a2a;
-  margin-top: 6px;
+.btn{
+  display: inline-block;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #0b1b34;
+  color: white;
+  text-decoration: none;
 }
-
-.info { line-height: 1.9; }
-.big { margin-top: 6px; font-size: 18px; }
-.note { margin-top: 14px; color: #555; font-size: 14px; }
+.btn.danger, .danger{
+  background: #b91c1c;
+}
