@@ -3,49 +3,61 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <title>لوحة المتدرب</title>
-  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="page">
-    <div class="header">
-      <img src="/static/header.jpg" alt="header">
-    </div>
+    <img class="header" src="{{ url_for('static', filename='header.jpg') }}" alt="header" />
 
     <div class="card">
       <h1>لوحة المتدرب</h1>
 
-      <div class="info">
-        <div><b>اسم المتدرب:</b> {{ trainee["اسم المتدرب"] }}</div>
-        <div><b>رقم المتدرب:</b> {{ trainee["رقم المتدرب"] }}</div>
-        <div><b>التخصص:</b> {{ trainee["التخصص"] }}</div>
-        <div class="big"><b>إجمالي الفرص لتخصصك:</b> {{ total_remaining }}</div>
-        {% if current_choice %}
-          <div class="ok"><b>اختيارك الحالي:</b> {{ current_choice }}</div>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="msgs">
+            {% for cat, msg in messages %}
+              <div class="msg {{cat}}">{{ msg }}</div>
+            {% endfor %}
+          </div>
         {% endif %}
+      {% endwith %}
+
+      <div class="info">
+        <div><b>اسم المتدرب:</b> {{ student.trainee_name }}</div>
+        <div><b>رقم المتدرب:</b> {{ student.trainee_id }}</div>
+        <div><b>رقم الجوال:</b> {{ student.phone }}</div>
+        <div><b>التخصص:</b> {{ student.spec }}</div>
+        <div><b>البرنامج:</b> {{ student.program }}</div>
+        <div><b>إجمالي الفرص لتخصصك:</b> {{ remaining_map|length }} - <b>المتبقي الآن:</b> {{ total_remaining }}</div>
       </div>
 
-      <hr>
+      <hr/>
 
-      <form method="post" action="/assign/{{ trainee['رقم المتدرب'] }}" class="form">
-        <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
-        <select name="entity" required>
-          <option value="">— اختر —</option>
-          {% for e in entities %}
-            {% if e.remaining > 0 or e.name == current_choice %}
-              <option value="{{ e.name }}" {% if e.name == current_choice %}selected{% endif %}>
-                {{ e.name }} (المتبقي: {{ e.remaining }})
-              </option>
-            {% endif %}
-          {% endfor %}
-        </select>
+      {% if chosen %}
+        <div class="chosen">
+          <b>تم اختيار جهة التدريب:</b> {{ chosen.entity }}
+        </div>
 
-        <button type="submit">حفظ الاختيار + طباعة PDF</button>
-      </form>
+        <div class="actions">
+          <a class="btn" href="{{ url_for('pdf', trainee_id=student.trainee_id) }}">تحميل PDF</a>
+          <form method="POST" action="{{ url_for('reset_choice', trainee_id=student.trainee_id) }}">
+            <button class="btn danger" type="submit">إلغاء الاختيار</button>
+          </form>
+        </div>
+      {% else %}
+        <form method="POST" action="{{ url_for('choose', trainee_id=student.trainee_id) }}">
+          <label>اختر جهة التدريب (تظهر فقط الجهات المتاحة)</label>
+          <select name="entity" required>
+            <option value="">— اختر —</option>
+            {% for e in available %}
+              <option value="{{ e }}">{{ e }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">حفظ الاختيار</button>
+        </form>
+      {% endif %}
 
-      <div class="note">
-        ملاحظة: الفرص تُحسب تلقائياً من ملف Excel حسب (التخصص + جهة التدريب) بعدد التكرار.
-      </div>
     </div>
   </div>
 </body>
