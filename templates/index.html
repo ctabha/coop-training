@@ -1,38 +1,38 @@
 <!doctype html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-<meta charset="utf-8">
-<title>بوابة التدريب التعاوني</title>
-<link rel="stylesheet" href="/static/style.css">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>بوابة خطاب التوجيه - التدريب التعاوني</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-
 <body>
 
-<div class="header">
-<img src="/static/header.jpg">
-</div>
+  <div class="page">
+    <header class="top">
+      <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="Header">
+    </header>
 
-<div class="container">
-<div class="card">
+    <main class="card">
+      <h1>بوابة خطاب التوجيه - التدريب التعاوني</h1>
 
-<h2>بوابة خطاب التوجيه</h2>
+      {% with messages = get_flashed_messages() %}
+        {% if messages %}
+          <div class="alert">
+            {% for m in messages %}
+              <div>{{ m }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
 
-<form method="post">
-
-<input name="trainee_id" placeholder="الرقم التدريبي" required>
-
-<input name="phone_last4" placeholder="آخر 4 أرقام من الجوال" required>
-
-<button type="submit">دخول</button>
-
-</form>
-
-{% if error %}
-<p style="color:red">{{error}}</p>
-{% endif %}
-
-</div>
-</div>
+      <form method="post" class="form">
+        <input name="trainee_id" placeholder="الرقم التدريبي / رقم المتدرب" required>
+        <input name="last4" placeholder="آخر 4 أرقام من الجوال" required>
+        <button type="submit">دخول</button>
+      </form>
+    </main>
+  </div>
 
 </body>
 </html>
