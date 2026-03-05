@@ -1,47 +1,86 @@
 @font-face {
   font-family: "NotoNaskhArabic";
   src: url("/static/fonts/NotoNaskhArabic-Regular.ttf") format("truetype");
+  font-weight: normal;
+  font-style: normal;
 }
 
 body{
-font-family:"NotoNaskhArabic",Arial;
-direction:rtl;
-background:#f5f5f5;
-margin:0;
+  margin:0;
+  background:#f5f5f5;
+  font-family: "NotoNaskhArabic", Arial, sans-serif;
 }
 
-.header img{
-width:100%;
+.page{
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
 }
 
-.container{
-width:900px;
-margin:auto;
-margin-top:30px;
+.top{
+  background:#fff;
+  padding:10px;
+  text-align:center;
+}
+
+.header-img{
+  max-width:100%;
+  height:auto;
 }
 
 .card{
-background:white;
-padding:25px;
-border-radius:12px;
-box-shadow:0 5px 15px rgba(0,0,0,0.1);
+  width:min(900px, 92vw);
+  margin:20px auto;
+  background:#fff;
+  border-radius:14px;
+  padding:18px;
+  box-shadow:0 10px 25px rgba(0,0,0,.08);
 }
 
-input,select,button{
-width:100%;
-padding:10px;
-margin-top:10px;
-border-radius:8px;
-border:1px solid #ccc;
-font-family:"NotoNaskhArabic";
+.form{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top:12px;
 }
 
-button{
-background:#0b1a33;
-color:white;
-cursor:pointer;
+input, select{
+  padding:12px;
+  border:1px solid #ddd;
+  border-radius:10px;
+  outline:none;
+  font-size:16px;
 }
 
-button:hover{
-opacity:.9;
+button, .btn{
+  border:none;
+  background:#0b1a33;
+  color:#fff;
+  padding:12px 16px;
+  border-radius:10px;
+  cursor:pointer;
+  font-size:16px;
+  text-decoration:none;
+  display:inline-block;
+  text-align:center;
+}
+
+.alert{
+  background:#fff3cd;
+  border:1px solid #ffeeba;
+  padding:10px;
+  border-radius:10px;
+}
+
+.info{
+  line-height:2;
+}
+
+.badge{
+  display:inline-block;
+  margin-top:8px;
+  background:#d1e7dd;
+  border:1px solid #badbcc;
+  padding:6px 10px;
+  border-radius:999px;
 }
