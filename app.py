@@ -1,40 +1,47 @@
 import os
-import io
 import json
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, send_file, flash
-
 import pandas as pd
 from docx import Document
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+TEMPL_DIR = os.path.join(BASE_DIR, "templates")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
 STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
 ENTITIES_JSON = os.path.join(DATA_DIR, "entities.json")
-SLOTS_JSON = os.path.join(DATA_DIR, "slots.json")
 ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
-LETTER_TEMPLATE_DOCX = os.path.join(DATA_DIR, "letter_template.docx")
+LETTER_TEMPLATE = os.path.join(DATA_DIR, "letter_template.docx")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 
 # ---------------------------
-# Helpers: Safe JSON read/write
+# Helpers: Safe JSON load/save
 # ---------------------------
-def safe_load_json(path, default):
+def _safe_load_json(path, default):
     try:
         if not os.path.exists(path):
             return default
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            txt = f.read().strip()
+            if not txt:
+                return default
+            return json.loads(txt)
+    except json.JSONDecodeError:
+        # لو الملف صار فيه كسر بالـ JSON
+        return default
     except Exception:
-        # لو الملف فاسد/فيه فاصلة/اقتباسات غلط... لا نطيّح الموقع
         return default
 
 
-def safe_write_json(path, data):
+def _safe_save_json(path, data):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -42,350 +49,412 @@ def safe_write_json(path, data):
 
 
 # ---------------------------
-# Load Students (Fix KeyError: 0)
+# Loaders
 # ---------------------------
+def load_entities():
+    # entities.json لازم يكون List
+    data = _safe_load_json(ENTITIES_JSON, [])
+    if isinstance(data, list):
+        return data
+    return []
+
+
+def load_assignments():
+    # assignments.json لازم يكون Dict {trainee_id: {...}}
+    data = _safe_load_json(ASSIGNMENTS_JSON, {})
+    if isinstance(data, dict):
+        return data
+    return {}
+
+
 def load_students():
-    # لازم الأعمدة تكون موجودة بالاسم العربي اللي عندك
-    # من صور إكسل عندك، الأعمدة مثل:
-    # (رقم المتدرب) (اسم المتدرب) (رقم الجوال) (التخصص) (البرنامج) (المدرب) ... الخ
+    """
+    يقرأ students.xlsx بشكل مرن سواء أعمدة عربية أو إنجليزية.
+    يرجع List of dict:
+      trainee_id, trainee_name, phone, specialization, program, course_ref, college_supervisor
+    """
+    if not os.path.exists(STUDENTS_XLSX):
+        return []
+
     df = pd.read_excel(STUDENTS_XLSX)
 
-    # تنظيف أسماء الأعمدة من الفراغات
+    # تنظيف أسماء الأعمدة
     df.columns = [str(c).strip() for c in df.columns]
 
-    # حاول نلتقط أسماء الأعمدة الأكثر شيوعًا عندك:
-    col_id = None
-    col_name = None
-    col_phone = None
-    col_spec = None
-    col_program = None
-    col_city = None
-    col_ref = None
+    # خرائط محتملة للأعمدة (عربي/إنجليزي)
+    candidates = {
+        "trainee_id": ["trainee_id", "Trainee ID", "رقم المتدرب", "الرقم التدريبي", "رقم التدريب", "رقم"],
+        "trainee_name": ["trainee_name", "Trainee Name", "اسم المتدرب", "اسم", "الاسم"],
+        "phone": ["phone", "Phone", "رقم الجوال", "الجوال", "الهاتف", "رقم الهاتف"],
+        "specialization": ["specialization", "Specialization", "التخصص"],
+        "program": ["program", "Program", "البرنامج"],
+        "course_ref": ["course_ref", "Course Ref", "الرقم المرجعي للمقرر", "مرجع المقرر", "رقم المقرر"],
+        "college_supervisor": ["college_supervisor", "College Supervisor", "مشرف الكلية", "المشرف", "المرشد"],
+    }
 
-    # جرّب أسماء متوقعة
-    for c in df.columns:
-        if col_id is None and ("رقم المتدرب" in c or "الرقم التدريبي" in c or c.strip() == "رقم المتدرب"):
-            col_id = c
-        if col_name is None and ("اسم المتدرب" in c or c.strip() == "اسم المتدرب"):
-            col_name = c
-        if col_phone is None and ("رقم الجوال" in c or "الجوال" in c or c.strip() == "رقم الجوال"):
-            col_phone = c
-        if col_spec is None and ("التخصص" in c or c.strip() == "التخصص"):
-            col_spec = c
-        if col_program is None and ("البرنامج" in c or c.strip() == "برنامج"):
-            col_program = c
-        if col_city is None and ("المدينة" in c or c.strip() == "المدينة"):
-            col_city = c
-        if col_ref is None and ("الرقم المرجعي" in c or c.strip() == "الرقم المرجعي"):
-            col_ref = c
+    def find_col(keys):
+        for k in keys:
+            if k in df.columns:
+                return k
+        return None
 
-    # لو ما لقى عمود معيّن، نخليه فاضي بدل ما يطيح
+    col_map = {field: find_col(keys) for field, keys in candidates.items()}
+
+    # لو ما حصل trainee_id / trainee_name لازم نوقف
+    if not col_map["trainee_id"] or not col_map["trainee_name"]:
+        return []
+
     students = []
-    for _, r in df.iterrows():
-        trainee_id = str(r[col_id]).strip() if col_id and pd.notna(r.get(col_id)) else ""
-        trainee_name = str(r[col_name]).strip() if col_name and pd.notna(r.get(col_name)) else ""
-        phone = str(r[col_phone]).strip() if col_phone and pd.notna(r.get(col_phone)) else ""
-        spec = str(r[col_spec]).strip() if col_spec and pd.notna(r.get(col_spec)) else ""
-        program = str(r[col_program]).strip() if col_program and pd.notna(r.get(col_program)) else ""
-        city = str(r[col_city]).strip() if col_city and pd.notna(r.get(col_city)) else ""
-        course_ref = str(r[col_ref]).strip() if col_ref and pd.notna(r.get(col_ref)) else ""
-
-        # تجاهل الصفوف الفاضية
-        if not trainee_id:
+    for _, row in df.iterrows():
+        tid = str(row[col_map["trainee_id"]]).strip() if col_map["trainee_id"] else ""
+        name = str(row[col_map["trainee_name"]]).strip() if col_map["trainee_name"] else ""
+        if tid == "" or tid.lower() == "nan":
             continue
+        if name == "" or name.lower() == "nan":
+            name = "—"
+
+        def get_val(field):
+            c = col_map.get(field)
+            if not c:
+                return ""
+            v = row[c]
+            if pd.isna(v):
+                return ""
+            return str(v).strip()
 
         students.append({
-            "trainee_id": trainee_id,
-            "trainee_name": trainee_name,
-            "phone": phone,
-            "spec": spec,
-            "program": program,
-            "city": city,
-            "course_ref": course_ref,
+            "trainee_id": tid,
+            "trainee_name": name,
+            "phone": get_val("phone"),
+            "specialization": get_val("specialization"),
+            "program": get_val("program"),
+            "course_ref": get_val("course_ref"),
+            "college_supervisor": get_val("college_supervisor"),
         })
 
     return students
 
 
-def find_student(trainee_id):
-    students = load_students()
-    for s in students:
-        if str(s["trainee_id"]).strip() == str(trainee_id).strip():
-            return s
-    return None
-
-
 # ---------------------------
-# Entities / Slots / Assignments
+# Slots calculation (AUTO from entities + assignments)
 # ---------------------------
-def load_entities():
-    # entities.json شكلها المتوقع:
-    # {
-    #   "تقنية المحركات ومركبات": [
-    #       {"name": "شركة X", "college_supervisor": "....", "start_date": "...", "end_date": "..."},
-    #       ...
-    #   ],
-    #   "تخصص آخر": [...]
-    # }
-    return safe_load_json(ENTITIES_JSON, {})
-
-
-def load_slots():
-    # slots.json شكلها المتوقع:
-    # {"تقنية المحركات ومركبات": {"شركة X": 3, "شركة Y": 1}, "تخصص آخر": {...}}
-    return safe_load_json(SLOTS_JSON, {})
-
-
-def load_assignments():
-    # assignments.json شكلها المتوقع:
-    # {"444242291": {"spec": "...", "entity": "شركة X", "ts": "..."}, ...}
-    # لو الملف فاسد/فاضي غلط -> يرجع {}
-    return safe_load_json(ASSIGNMENTS_JSON, {})
-
-
-def save_assignments(assignments):
-    safe_write_json(ASSIGNMENTS_JSON, assignments)
-
-
-def get_remaining_for_student(student, slots, assignments):
+def compute_remaining_from_entities(entities, assignments, students):
     """
-    يرجع قائمة جهات تدريب لتخصص الطالب + عدد الفرص المتبقية لكل جهة.
+    entities: list of {name, specialization, slots}
+    assignments: dict {trainee_id: {entity, ...}}
+    students: list of student dict
+    returns:
+      remaining_by_spec = {spec: {entity_name: remaining_int}}
+      total_by_spec     = {spec: total_slots_int}
     """
-    spec = student.get("spec", "").strip()
-    spec_slots = slots.get(spec, {})
-    if not isinstance(spec_slots, dict):
-        spec_slots = {}
+    total_by_spec = {}
+    total_by_entity = {}  # (spec, entity) -> total
 
-    # احسب المستخدم لكل جهة لنفس التخصص
+    for e in entities:
+        spec = str(e.get("specialization", "")).strip()
+        name = str(e.get("name", "")).strip()
+        if not spec or not name:
+            continue
+        try:
+            slots = int(e.get("slots", 0) or 0)
+        except Exception:
+            slots = 0
+
+        total_by_spec[spec] = total_by_spec.get(spec, 0) + slots
+        total_by_entity[(spec, name)] = slots
+
+    id_to_student = {s["trainee_id"]: s for s in students}
     used_by_entity = {}
-    for tid, info in assignments.items():
-        if not isinstance(info, dict):
-            continue
-        if info.get("spec") != spec:
-            continue
-        ent = info.get("entity")
+
+    for tid, a in (assignments or {}).items():
+        a = a or {}
+        ent = a.get("entity")
         if not ent:
             continue
-        used_by_entity[ent] = used_by_entity.get(ent, 0) + 1
+        st = id_to_student.get(str(tid))
+        if not st:
+            continue
+        spec = str(st.get("specialization", "")).strip()
+        if not spec:
+            continue
+        key = (spec, str(ent).strip())
+        used_by_entity[key] = used_by_entity.get(key, 0) + 1
 
-    remaining = []
-    for ent_name, total in spec_slots.items():
-        try:
-            total_int = int(total)
-        except Exception:
-            total_int = 0
-        used_int = int(used_by_entity.get(ent_name, 0))
-        rem = max(total_int - used_int, 0)
-        remaining.append({"entity": ent_name, "total": total_int, "used": used_int, "remaining": rem})
+    remaining_by_spec = {}
+    for (spec, name), total in total_by_entity.items():
+        used = used_by_entity.get((spec, name), 0)
+        rem = total - used
+        if rem < 0:
+            rem = 0
+        remaining_by_spec.setdefault(spec, {})
+        remaining_by_spec[spec][name] = rem
 
-    # رتب من الأعلى للأقل
-    remaining.sort(key=lambda x: x["remaining"], reverse=True)
-    return remaining
+    return remaining_by_spec, total_by_spec
 
 
-def pick_auto_entity(remaining_list):
+def available_entities_for_student(student, entities, assignments, students_all):
     """
-    اختيار تلقائي: أول جهة فيها remaining > 0
+    يرجّع قائمة الجهات المتاحة (remaining > 0) لنفس تخصص الطالب.
     """
-    for item in remaining_list:
-        if item["remaining"] > 0:
-            return item["entity"]
-    return ""
+    spec = str(student.get("specialization", "")).strip()
+    remaining_by_spec, _ = compute_remaining_from_entities(entities, assignments, students_all)
+    remaining = remaining_by_spec.get(spec, {})
+
+    # قائمة الجهات من entities بنفس التخصص + فيها remaining > 0
+    result = []
+    for e in entities:
+        if str(e.get("specialization", "")).strip() != spec:
+            continue
+        name = str(e.get("name", "")).strip()
+        if not name:
+            continue
+        if remaining.get(name, 0) > 0:
+            result.append({
+                "name": name,
+                "remaining": remaining.get(name, 0),
+                "slots": int(e.get("slots", 0) or 0),
+            })
+
+    # ترتيب: الأكبر فرص أولاً
+    result.sort(key=lambda x: x["remaining"], reverse=True)
+    return result
 
 
 # ---------------------------
-# DOCX Template Fill
+# DOCX template filling
 # ---------------------------
-def replace_in_paragraph(paragraph, mapping):
-    # استبدال داخل paragraph مع الحفاظ قدر الإمكان على التنسيق
-    # لأن الـ placeholders قد يكونون موزعين على Runs
-    full_text = "".join(run.text for run in paragraph.runs)
-    if not full_text:
-        return
-
-    new_text = full_text
-    for k, v in mapping.items():
-        new_text = new_text.replace(k, v)
-
-    if new_text != full_text:
-        # امسح الرنز ثم اكتب نص واحد
-        for run in paragraph.runs:
-            run.text = ""
-        paragraph.runs[0].text = new_text if paragraph.runs else paragraph.add_run(new_text).text
+def _replace_in_paragraph(paragraph, mapping):
+    # استبدال نص بسيط (يدعم وجود النص داخل run واحد غالبًا)
+    for key, val in mapping.items():
+        if key in paragraph.text:
+            for run in paragraph.runs:
+                if key in run.text:
+                    run.text = run.text.replace(key, val)
 
 
-def replace_in_table(table, mapping):
-    for row in table.rows:
-        for cell in row.cells:
-            for p in cell.paragraphs:
-                replace_in_paragraph(p, mapping)
-            for t in cell.tables:
-                replace_in_table(t, mapping)
+def _replace_everywhere(doc: Document, mapping):
+    # body
+    for p in doc.paragraphs:
+        _replace_in_paragraph(p, mapping)
+
+    # tables
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    _replace_in_paragraph(p, mapping)
+
+    # headers/footers
+    for section in doc.sections:
+        header = section.header
+        footer = section.footer
+        for p in header.paragraphs:
+            _replace_in_paragraph(p, mapping)
+        for p in footer.paragraphs:
+            _replace_in_paragraph(p, mapping)
+        for table in header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        _replace_in_paragraph(p, mapping)
+        for table in footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        _replace_in_paragraph(p, mapping)
 
 
-def fill_letter_docx(student, chosen_entity, entities_data):
-    doc = Document(LETTER_TEMPLATE_DOCX)
+def generate_letter_docx(student, entity_name):
+    """
+    يولّد ملف Word على نفس قالبك letter_template.docx
+    """
+    if not os.path.exists(LETTER_TEMPLATE):
+        raise FileNotFoundError("letter_template.docx غير موجود داخل data/")
 
-    # احضر بيانات الجهة من entities.json إن وجدت
-    spec = student.get("spec", "").strip()
-    ent_info = {}
-    spec_entities = entities_data.get(spec, [])
-    if isinstance(spec_entities, list):
-        for e in spec_entities:
-            if isinstance(e, dict) and e.get("name") == chosen_entity:
-                ent_info = e
-                break
+    doc = Document(LETTER_TEMPLATE)
+
+    # قيم افتراضية للتواريخ (تقدر تغيرها حسب ملفك لو عندك start_date/end_date في students.xlsx)
+    start_date = student.get("start_date", "") or ""
+    end_date = student.get("end_date", "") or ""
 
     mapping = {
-        "{{phone}}": str(student.get("phone", "")).strip(),
-        "{{trainee_name}}": str(student.get("trainee_name", "")).strip(),
-        "{{trainee_id}}": str(student.get("trainee_id", "")).strip(),
-        "{{course_ref}}": str(student.get("course_ref", "")).strip(),
-        "{{college_supervisor}}": str(ent_info.get("college_supervisor", "")).strip(),
-        "{{training_entity}}": str(chosen_entity).strip(),
-        "{{start_date}}": str(ent_info.get("start_date", "")).strip(),
-        "{{end_date}}": str(ent_info.get("end_date", "")).strip(),
+        "{{trainee_name}}": student.get("trainee_name", ""),
+        "{{trainee_id}}": student.get("trainee_id", ""),
+        "{{phone}}": student.get("phone", ""),
+        "{{specialization}}": student.get("specialization", ""),
+        "{{program}}": student.get("program", ""),
+        "{{course_ref}}": student.get("course_ref", ""),
+        "{{college_supervisor}}": student.get("college_supervisor", ""),
+        "{{training_entity}}": entity_name,
+        "{{start_date}}": start_date,
+        "{{end_date}}": end_date,
     }
 
-    # Paragraphs
-    for p in doc.paragraphs:
-        replace_in_paragraph(p, mapping)
+    _replace_everywhere(doc, mapping)
 
-    # Tables
-    for t in doc.tables:
-        replace_in_table(t, mapping)
-
-    out = io.BytesIO()
-    doc.save(out)
-    out.seek(0)
-    return out
+    out_name = f"letter_{student.get('trainee_id','')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.docx"
+    out_path = os.path.join(OUTPUT_DIR, out_name)
+    doc.save(out_path)
+    return out_path
 
 
 # ---------------------------
 # Routes
 # ---------------------------
-@app.get("/")
+@app.route("/", methods=["GET", "POST", "HEAD"])
 def index():
-    return render_template("index.html")
+    # Render health check sends HEAD sometimes
+    if request.method == "HEAD":
+        return ("", 200)
 
+    students = load_students()
 
-@app.post("/")
-def login():
-    trainee_id = request.form.get("trainee_id", "").strip()
-    last4 = request.form.get("last4", "").strip()
+    if request.method == "GET":
+        return render_template("index.html")
 
-    student = find_student(trainee_id)
-    if not student:
-        flash("الرقم التدريبي غير موجود.")
+    trainee_id = (request.form.get("trainee_id") or "").strip()
+    phone_last4 = (request.form.get("phone_last4") or "").strip()
+
+    if not trainee_id:
+        flash("اكتب رقم المتدرب.", "error")
         return redirect(url_for("index"))
 
-    phone = str(student.get("phone", "")).strip()
-    if len(phone) < 4 or phone[-4:] != last4:
-        flash("آخر 4 أرقام من الجوال غير صحيحة.")
+    # البحث عن الطالب
+    st = None
+    for s in students:
+        if s["trainee_id"] == trainee_id:
+            st = s
+            break
+
+    if not st:
+        flash("رقم المتدرب غير موجود في ملف الطلاب.", "error")
         return redirect(url_for("index"))
+
+    # لو رقم الجوال موجود، نتحقق من آخر 4
+    phone = (st.get("phone") or "").strip()
+    if phone_last4:
+        if len(phone) < 4 or not phone.endswith(phone_last4):
+            flash("آخر 4 أرقام من الجوال غير صحيحة.", "error")
+            return redirect(url_for("index"))
 
     return redirect(url_for("dashboard", trainee_id=trainee_id))
 
 
-@app.get("/dashboard/<trainee_id>")
+@app.route("/dashboard/<trainee_id>", methods=["GET"])
 def dashboard(trainee_id):
-    student = find_student(trainee_id)
-    if not student:
-        return "Student not found", 404
-
-    slots = load_slots()
+    students_all = load_students()
     assignments = load_assignments()
     entities = load_entities()
 
-    remaining_list = get_remaining_for_student(student, slots, assignments)
+    student = next((s for s in students_all if s["trainee_id"] == str(trainee_id)), None)
+    if not student:
+        return "Trainee not found", 404
 
-    # إذا الطالب مسجّل سابقًا
-    existing = assignments.get(str(trainee_id))
-    existing_entity = ""
-    if isinstance(existing, dict):
-        existing_entity = existing.get("entity", "") or ""
+    spec = str(student.get("specialization", "")).strip()
 
-    total_remaining = sum(x["remaining"] for x in remaining_list)
+    remaining_by_spec, total_by_spec = compute_remaining_from_entities(entities, assignments, students_all)
+    total_slots = total_by_spec.get(spec, 0)
+
+    # الجهات المتاحة (المتبقي > 0)
+    available = available_entities_for_student(student, entities, assignments, students_all)
+
+    # التعيين الحالي لو موجود
+    assigned = assignments.get(str(trainee_id))
 
     return render_template(
         "dashboard.html",
         student=student,
-        remaining_list=remaining_list,
-        total_remaining=total_remaining,
-        existing_entity=existing_entity
+        total_slots=total_slots,
+        available=available,
+        assigned=assigned
     )
 
 
-@app.post("/choose/<trainee_id>")
-def choose(trainee_id):
-    student = find_student(trainee_id)
-    if not student:
-        return "Student not found", 404
-
-    slots = load_slots()
+@app.route("/assign/<trainee_id>", methods=["POST"])
+def assign(trainee_id):
+    students_all = load_students()
     assignments = load_assignments()
+    entities = load_entities()
 
-    remaining_list = get_remaining_for_student(student, slots, assignments)
+    student = next((s for s in students_all if s["trainee_id"] == str(trainee_id)), None)
+    if not student:
+        flash("المتدرب غير موجود.", "error")
+        return redirect(url_for("index"))
 
-    chosen_entity = request.form.get("training_entity", "").strip()
-    auto_pick = request.form.get("auto_pick", "").strip()
-
-    if auto_pick == "1":
-        chosen_entity = pick_auto_entity(remaining_list)
-
-    if not chosen_entity:
-        flash("اختر جهة تدريب أو استخدم الاختيار التلقائي.")
+    chosen = (request.form.get("entity") or "").strip()
+    if not chosen:
+        flash("اختر جهة تدريب.", "error")
         return redirect(url_for("dashboard", trainee_id=trainee_id))
 
-    # تحقق إن فيها فرصة
-    rem_map = {x["entity"]: x["remaining"] for x in remaining_list}
-    if rem_map.get(chosen_entity, 0) <= 0:
-        flash("هذه الجهة مكتملة ولا يوجد فرص متبقية. اختر جهة أخرى.")
+    # تحقق أن الجهة متاحة فعلاً (باقي فيها فرص)
+    available = available_entities_for_student(student, entities, assignments, students_all)
+    allowed_names = {a["name"] for a in available}
+    if chosen not in allowed_names:
+        flash("هذه الجهة لا توجد بها فرص متبقية.", "error")
         return redirect(url_for("dashboard", trainee_id=trainee_id))
 
-    # سجّل اختيار الطالب
+    # حفظ التعيين
     assignments[str(trainee_id)] = {
-        "spec": student.get("spec", "").strip(),
-        "entity": chosen_entity,
-        "ts": datetime.utcnow().isoformat()
+        "entity": chosen,
+        "assigned_at": datetime.now().isoformat(timespec="seconds")
     }
-    save_assignments(assignments)
+    _safe_save_json(ASSIGNMENTS_JSON, assignments)
 
-    flash("تم تسجيل اختيارك بنجاح ✅")
+    flash("تم تأكيد الاختيار وتنقيص الفرص تلقائيًا.", "ok")
     return redirect(url_for("dashboard", trainee_id=trainee_id))
 
 
-@app.get("/download-letter/<trainee_id>")
-def download_letter(trainee_id):
-    student = find_student(trainee_id)
-    if not student:
-        return "Student not found", 404
-
+@app.route("/auto_assign/<trainee_id>", methods=["POST"])
+def auto_assign(trainee_id):
+    students_all = load_students()
     assignments = load_assignments()
-    info = assignments.get(str(trainee_id))
-    if not isinstance(info, dict) or not info.get("entity"):
-        flash("لا يمكن طباعة الخطاب قبل اختيار جهة تدريب.")
-        return redirect(url_for("dashboard", trainee_id=trainee_id))
-
-    chosen_entity = info["entity"]
     entities = load_entities()
 
-    out_docx = fill_letter_docx(student, chosen_entity, entities)
+    student = next((s for s in students_all if s["trainee_id"] == str(trainee_id)), None)
+    if not student:
+        flash("المتدرب غير موجود.", "error")
+        return redirect(url_for("index"))
 
-    filename = f"خطاب_توجيه_{trainee_id}.docx"
-    return send_file(
-        out_docx,
-        as_attachment=True,
-        download_name=filename,
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    )
+    available = available_entities_for_student(student, entities, assignments, students_all)
+    if not available:
+        flash("لا توجد جهات متاحة في تخصصك.", "error")
+        return redirect(url_for("dashboard", trainee_id=trainee_id))
+
+    chosen = available[0]["name"]  # أول جهة فيها فرص
+    assignments[str(trainee_id)] = {
+        "entity": chosen,
+        "assigned_at": datetime.now().isoformat(timespec="seconds")
+    }
+    _safe_save_json(ASSIGNMENTS_JSON, assignments)
+
+    flash(f"تم اختيار جهة تلقائيًا: {chosen}", "ok")
+    return redirect(url_for("dashboard", trainee_id=trainee_id))
 
 
-# Health check
-@app.get("/health")
-def health():
-    return {"ok": True}
+@app.route("/download_letter/<trainee_id>", methods=["GET"])
+def download_letter(trainee_id):
+    students_all = load_students()
+    assignments = load_assignments()
+
+    student = next((s for s in students_all if s["trainee_id"] == str(trainee_id)), None)
+    if not student:
+        return "Trainee not found", 404
+
+    assigned = assignments.get(str(trainee_id))
+    if not assigned or not assigned.get("entity"):
+        flash("لا يوجد اختيار محفوظ، اختر جهة أولاً.", "error")
+        return redirect(url_for("dashboard", trainee_id=trainee_id))
+
+    entity_name = assigned["entity"]
+
+    try:
+        out_path = generate_letter_docx(student, entity_name)
+    except Exception as e:
+        return f"Error generating letter: {e}", 500
+
+    return send_file(out_path, as_attachment=True, download_name="خطاب_التوجيه.docx")
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")))
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
