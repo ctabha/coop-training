@@ -8,11 +8,11 @@ from docx import Document
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
 ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
 LETTER_TEMPLATE = os.path.join(DATA_DIR, "letter_template.docx")
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -53,31 +53,8 @@ def save_assignments(data):
 
 
 # -----------------------------
-# Excel reading - automatic
+# Excel loading (for your exact file)
 # -----------------------------
-def normalize_text(s):
-    return str(s).strip().lower()
-
-
-def find_column(df, candidates):
-    cols = list(df.columns)
-    norm_map = {c: normalize_text(c) for c in cols}
-
-    for cand in candidates:
-        cand_norm = normalize_text(cand)
-        for original, normalized in norm_map.items():
-            if cand_norm == normalized:
-                return original
-
-    for cand in candidates:
-        cand_norm = normalize_text(cand)
-        for original, normalized in norm_map.items():
-            if cand_norm in normalized:
-                return original
-
-    return None
-
-
 def load_students():
     if not os.path.exists(STUDENTS_XLSX):
         raise FileNotFoundError("ملف data/students.xlsx غير موجود")
@@ -85,37 +62,45 @@ def load_students():
     df = pd.read_excel(STUDENTS_XLSX)
     df.columns = [str(c).strip() for c in df.columns]
 
-    col_id = find_column(df, ["رقم المتدرب", "الرقم التدريبي", "trainee_id", "id"])
-    col_name = find_column(df, ["اسم المتدرب", "الاسم", "trainee_name", "name"])
-    col_phone = find_column(df, ["رقم الجوال", "الجوال", "الهاتف", "phone", "mobile"])
-    col_spec = find_column(df, ["التخصص", "specialization", "major", "spec"])
-    col_program = find_column(df, ["البرنامج", "program"])
-    col_entity = find_column(df, ["جهة التدريب", "الجهة", "entity", "training_entity", "جهة التدريب التعاوني"])
-    col_course_ref = find_column(df, ["الرقم المرجعي", "course_ref", "ref"])
-    col_supervisor = find_column(df, ["مشرف الكلية", "college_supervisor", "supervisor", "المدرب"])
-    col_start = find_column(df, ["start_date", "تاريخ البداية", "بداية التدريب"])
-    col_end = find_column(df, ["end_date", "تاريخ النهاية", "نهاية التدريب"])
+    # الأعمدة الموجودة فعليًا في ملفك
+    required_cols = [
+        "التخصص",
+        "الرقم المرجعي",
+        "المدرب",
+        "رقم المتدرب",
+        "إسم المتدرب",
+        "برنامج",
+        "رقم الجوال",
+    ]
 
-    required = {
-        "رقم المتدرب": col_id,
-        "اسم المتدرب": col_name,
-        "رقم الجوال": col_phone,
-        "التخصص": col_spec,
-        "جهة التدريب": col_entity,
-    }
+    # عمود جهة التدريب قد يكون بمسافة أو بدون
+    entity_col = None
+    if "جهة التدريب" in df.columns:
+        entity_col = "جهة التدريب"
+    elif "جهة التدريب " in df.columns:
+        entity_col = "جهة التدريب "
+    else:
+        for c in df.columns:
+            if "جهة التدريب" in str(c):
+                entity_col = c
+                break
 
-    missing = [k for k, v in required.items() if v is None]
+    missing = [c for c in required_cols if c not in df.columns]
+    if entity_col is None:
+        missing.append("جهة التدريب")
+
     if missing:
-        raise ValueError("الأعمدة الناقصة في students.xlsx: " + " - ".join(missing))
+        raise ValueError("الأعمدة الناقصة في ملف الإكسل: " + " - ".join(missing))
 
     students = []
+
     for _, row in df.iterrows():
-        trainee_id = str(row[col_id]).strip() if pd.notna(row[col_id]) else ""
+        trainee_id = str(row["رقم المتدرب"]).strip() if pd.notna(row["رقم المتدرب"]) else ""
         if trainee_id == "" or trainee_id.lower() == "nan":
             continue
 
         def getv(col):
-            if col is None:
+            if col not in row:
                 return ""
             val = row[col]
             if pd.isna(val):
@@ -125,15 +110,15 @@ def load_students():
 
         students.append({
             "trainee_id": trainee_id,
-            "trainee_name": getv(col_name),
-            "phone": getv(col_phone),
-            "specialization": getv(col_spec),
-            "program": getv(col_program) if col_program else getv(col_spec),
-            "training_entity": getv(col_entity),
-            "course_ref": getv(col_course_ref),
-            "college_supervisor": getv(col_supervisor),
-            "start_date": getv(col_start),
-            "end_date": getv(col_end),
+            "trainee_name": getv("إسم المتدرب"),
+            "phone": getv("رقم الجوال"),
+            "specialization": getv("التخصص"),
+            "program": getv("برنامج"),
+            "training_entity": getv(entity_col),
+            "course_ref": getv("الرقم المرجعي"),
+            "college_supervisor": getv("المدرب"),
+            "start_date": "",
+            "end_date": "",
         })
 
     return students
@@ -152,35 +137,33 @@ def find_student(trainee_id):
 # -----------------------------
 def compute_slots_from_excel(students):
     """
-    يحسب الفرص من الإكسل مباشرة:
     كل صف = فرصة واحدة للجهة داخل التخصص
-    الناتج:
-    {
-      "التخصص": {
-        "اسم الجهة": عدد الفرص
-      }
-    }
     """
     slots = {}
     for s in students:
         spec = (s.get("specialization") or "").strip()
         entity = (s.get("training_entity") or "").strip()
+
         if not spec or not entity:
             continue
+
         slots.setdefault(spec, {})
         slots[spec][entity] = slots[spec].get(entity, 0) + 1
+
     return slots
 
 
 def compute_used_from_assignments(assignments, students):
     """
-    يحسب عدد المستخدم من كل جهة لكل تخصص
+    يحسب المستخدم من كل جهة لكل تخصص حسب assignments
     """
     id_to_student = {s["trainee_id"]: s for s in students}
     used = {}
+
     for trainee_id, rec in assignments.items():
         if not isinstance(rec, dict):
             continue
+
         entity = (rec.get("entity") or "").strip()
         if not entity:
             continue
@@ -195,6 +178,7 @@ def compute_used_from_assignments(assignments, students):
 
         used.setdefault(spec, {})
         used[spec][entity] = used[spec].get(entity, 0) + 1
+
     return used
 
 
@@ -372,7 +356,7 @@ def assign(trainee_id):
         "entity": chosen,
         "assigned_at": datetime.now().isoformat(timespec="seconds")
     }
-    _safe_save_json(ASSIGNMENTS_JSON, assignments)
+    safe_save_json(ASSIGNMENTS_JSON, assignments)
 
     flash("تم تأكيد الاختيار وتنقيص الفرص تلقائيًا.", "ok")
     return redirect(url_for("dashboard", trainee_id=trainee_id))
@@ -398,7 +382,7 @@ def auto_assign(trainee_id):
         "entity": chosen,
         "assigned_at": datetime.now().isoformat(timespec="seconds")
     }
-    _safe_save_json(ASSIGNMENTS_JSON, assignments)
+    safe_save_json(ASSIGNMENTS_JSON, assignments)
 
     flash(f"تم الاختيار التلقائي: {chosen}", "ok")
     return redirect(url_for("dashboard", trainee_id=trainee_id))
@@ -429,7 +413,7 @@ def download_letter(trainee_id):
 @app.route("/health")
 def health():
     return {"ok": True}
-    
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "5000")), debug=True)
