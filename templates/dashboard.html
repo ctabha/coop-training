@@ -1,70 +1,83 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
   <title>لوحة المتدرب</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-
-<div class="page">
-  <header class="top">
-    <img class="header-img" src="{{ url_for('static', filename='header.jpg') }}" alt="Header">
-  </header>
-
-  <main class="card">
-    <h1>لوحة المتدرب</h1>
-
-    {% with messages = get_flashed_messages() %}
-      {% if messages %}
-        <div class="alert">
-          {% for m in messages %}
-            <div>{{ m }}</div>
-          {% endfor %}
-        </div>
-      {% endif %}
-    {% endwith %}
-
-    <div class="info">
-      <div><b>اسم المتدرب:</b> {{ student.trainee_name }}</div>
-      <div><b>رقم المتدرب:</b> {{ student.trainee_id }}</div>
-      <div><b>التخصص:</b> {{ student.spec }}</div>
-      <div><b>البرنامج:</b> {{ student.program }}</div>
-      <div><b>إجمالي الفرص لتخصصك:</b> {{ total_remaining }}</div>
-      {% if existing_entity %}
-        <div class="badge">تم اختيار: {{ existing_entity }}</div>
-      {% endif %}
+  <div class="page">
+    <div class="header">
+      <img src="/static/header.jpg" class="header-img" alt="header">
     </div>
 
-    <hr>
+    <div class="card">
+      <h1>لوحة المتدرب</h1>
 
-    <form method="post" action="{{ url_for('choose', trainee_id=student.trainee_id) }}" class="form">
-      <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
-      <select name="training_entity">
-        <option value="">— اختر —</option>
-        {% for x in remaining_list %}
-          <option value="{{ x.entity }}">
-            {{ x.entity }} (المتبقي: {{ x.remaining }} / الإجمالي: {{ x.total }})
-          </option>
-        {% endfor %}
-      </select>
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="msgs">
+            {% for cat,msg in messages %}
+              <div class="msg {{cat}}">{{msg}}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
 
-      <div style="display:flex; gap:10px; flex-wrap:wrap;">
-        <button type="submit">تأكيد الاختيار</button>
-
-        <button type="submit" name="auto_pick" value="1">
-          اختيار تلقائي (أول جهة فيها فرص)
-        </button>
-
-        <a class="btn" href="{{ url_for('download_letter', trainee_id=student.trainee_id) }}">
-          تحميل خطاب التوجيه (Word)
-        </a>
+      <div class="info">
+        <div><b>اسم المتدرب:</b> {{student.trainee_name}}</div>
+        <div><b>رقم المتدرب:</b> {{student.trainee_id}}</div>
+        <div><b>التخصص:</b> {{student.specialization}}</div>
+        <div><b>البرنامج:</b> {{student.program}}</div>
+        <div><b>إجمالي الفرص لتخصصك:</b> {{total_slots}}</div>
       </div>
-    </form>
 
-  </main>
-</div>
+      <hr>
 
+      {% if assigned and assigned.entity %}
+        <div class="assigned">
+          <b>تم اختيار جهة تدريب:</b> {{assigned.entity}}
+          <div class="small">وقت الاختيار: {{assigned.assigned_at}}</div>
+        </div>
+
+        <div class="actions">
+          <a class="btn" href="/download_letter/{{student.trainee_id}}">تحميل خطاب التوجيه (Word)</a>
+          <a class="btn ghost" href="/">تسجيل خروج</a>
+        </div>
+      {% else %}
+        <div class="note">
+          اختر جهة تدريب أو استخدم الاختيار التلقائي:
+        </div>
+
+        <form method="post" action="/assign/{{student.trainee_id}}" class="form">
+          <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
+          <select name="entity" required>
+            <option value="">— اختر —</option>
+            {% for e in available %}
+              <option value="{{e.name}}">{{e.name}} (المتبقي: {{e.remaining}})</option>
+            {% endfor %}
+          </select>
+
+          <div class="actions">
+            <button class="btn" type="submit">تأكيد الاختيار</button>
+          </div>
+        </form>
+
+        <form method="post" action="/auto_assign/{{student.trainee_id}}" class="form" style="margin-top:10px;">
+          <button class="btn ghost" type="submit">اختيار تلقائي (أول جهة فيها فرص)</button>
+        </form>
+
+        {% if not available %}
+          <div class="msg error" style="margin-top:12px;">
+            لا توجد جهات متاحة في تخصصك (كل الفرص انتهت).
+          </div>
+        {% endif %}
+
+        <div class="actions" style="margin-top:12px;">
+          <a class="btn ghost" href="/">رجوع</a>
+        </div>
+      {% endif %}
+    </div>
+  </div>
 </body>
 </html>
