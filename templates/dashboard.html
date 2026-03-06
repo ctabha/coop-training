@@ -1,16 +1,16 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
-  <meta charset="utf-8" />
+  <meta charset="utf-8">
   <title>لوحة المتدرب</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <div class="page">
-    <div class="header">
-      <img src="/static/header.jpg" class="header-img" alt="header">
-    </div>
+  <div class="header">
+    <img src="/static/header.jpg" class="header-img" alt="header">
+  </div>
 
+  <div class="container">
     <div class="card">
       <h1>لوحة المتدرب</h1>
 
@@ -30,6 +30,7 @@
         <div><b>التخصص:</b> {{student.specialization}}</div>
         <div><b>البرنامج:</b> {{student.program}}</div>
         <div><b>إجمالي الفرص لتخصصك:</b> {{total_slots}}</div>
+        <div><b>المتبقي الآن:</b> {{total_remaining}}</div>
       </div>
 
       <hr>
@@ -42,25 +43,21 @@
 
         <div class="actions">
           <a class="btn" href="/download_letter/{{student.trainee_id}}">تحميل خطاب التوجيه (Word)</a>
-          <a class="btn ghost" href="/">تسجيل خروج</a>
+          <a class="btn ghost" href="/">رجوع</a>
         </div>
       {% else %}
-        <div class="note">
-          اختر جهة تدريب أو استخدم الاختيار التلقائي:
-        </div>
+        <div class="note">اختر جهة تدريب أو استخدم الاختيار التلقائي:</div>
 
         <form method="post" action="/assign/{{student.trainee_id}}" class="form">
           <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
           <select name="entity" required>
             <option value="">— اختر —</option>
             {% for e in available %}
-              <option value="{{e.name}}">{{e.name}} (المتبقي: {{e.remaining}})</option>
+              <option value="{{e.name}}">{{e.name}} (المتبقي: {{e.remaining}} / الإجمالي: {{e.slots}})</option>
             {% endfor %}
           </select>
 
-          <div class="actions">
-            <button class="btn" type="submit">تأكيد الاختيار</button>
-          </div>
+          <button type="submit">تأكيد الاختيار</button>
         </form>
 
         <form method="post" action="/auto_assign/{{student.trainee_id}}" class="form" style="margin-top:10px;">
@@ -69,13 +66,9 @@
 
         {% if not available %}
           <div class="msg error" style="margin-top:12px;">
-            لا توجد جهات متاحة في تخصصك (كل الفرص انتهت).
+            لا توجد جهات متاحة في تخصصك الآن.
           </div>
         {% endif %}
-
-        <div class="actions" style="margin-top:12px;">
-          <a class="btn ghost" href="/">رجوع</a>
-        </div>
       {% endif %}
     </div>
   </div>
