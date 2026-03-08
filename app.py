@@ -1,5 +1,4 @@
 import os
-import io
 import json
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, send_file, flash
@@ -20,9 +19,6 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
 
-# -----------------------------
-# JSON helpers
-# -----------------------------
 def safe_load_json(path, default):
     try:
         if not os.path.exists(path):
@@ -52,9 +48,30 @@ def save_assignments(data):
     safe_save_json(ASSIGNMENTS_JSON, data)
 
 
-# -----------------------------
-# Excel loading (for your exact file)
-# -----------------------------
+def find_entity_column(df):
+    for c in df.columns:
+        if str(c).strip() == "جهة التدريب":
+            return c
+    for c in df.columns:
+        if "جهة التدريب" in str(c):
+            return c
+    return None
+
+
+def find_name_column(df):
+    for c in df.columns:
+        if str(c).strip() == "إسم المتدرب":
+            return c
+    for c in df.columns:
+        if str(c).strip() == "اسم المتدرب":
+            return c
+    for c in df.columns:
+        txt = str(c).strip()
+        if "اسم المتدرب" in txt or "إسم المتدرب" in txt:
+            return c
+    return None
+
+
 def load_students():
     if not os.path.exists(STUDENTS_XLSX):
         raise FileNotFoundError("ملف data/students.xlsx غير موجود")
@@ -62,32 +79,23 @@ def load_students():
     df = pd.read_excel(STUDENTS_XLSX)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # الأعمدة الموجودة فعليًا في ملفك
+    entity_col = find_entity_column(df)
+    name_col = find_name_column(df)
+
     required_cols = [
         "التخصص",
         "الرقم المرجعي",
         "المدرب",
         "رقم المتدرب",
-        "إسم المتدرب",
         "برنامج",
         "رقم الجوال",
     ]
 
-    # عمود جهة التدريب قد يكون بمسافة أو بدون
-    entity_col = None
-    if "جهة التدريب" in df.columns:
-        entity_col = "جهة التدريب"
-    elif "جهة التدريب " in df.columns:
-        entity_col = "جهة التدريب "
-    else:
-        for c in df.columns:
-            if "جهة التدريب" in str(c):
-                entity_col = c
-                break
-
     missing = [c for c in required_cols if c not in df.columns]
     if entity_col is None:
         missing.append("جهة التدريب")
+    if name_col is None:
+        missing.append("اسم المتدرب")
 
     if missing:
         raise ValueError("الأعمدة الناقصة في ملف الإكسل: " + " - ".join(missing))
@@ -100,7 +108,7 @@ def load_students():
             continue
 
         def getv(col):
-            if col not in row:
+            if col is None:
                 return ""
             val = row[col]
             if pd.isna(val):
@@ -110,7 +118,7 @@ def load_students():
 
         students.append({
             "trainee_id": trainee_id,
-            "trainee_name": getv("إسم المتدرب"),
+            "trainee_name": getv(name_col),
             "phone": getv("رقم الجوال"),
             "specialization": getv("التخصص"),
             "program": getv("برنامج"),
@@ -125,20 +133,13 @@ def load_students():
 
 
 def find_student(trainee_id):
-    students = load_students()
-    for s in students:
+    for s in load_students():
         if s["trainee_id"] == str(trainee_id).strip():
             return s
     return None
 
 
-# -----------------------------
-# Automatic slots from Excel only
-# -----------------------------
 def compute_slots_from_excel(students):
-    """
-    كل صف = فرصة واحدة للجهة داخل التخصص
-    """
     slots = {}
     for s in students:
         spec = (s.get("specialization") or "").strip()
@@ -154,9 +155,6 @@ def compute_slots_from_excel(students):
 
 
 def compute_used_from_assignments(assignments, students):
-    """
-    يحسب المستخدم من كل جهة لكل تخصص حسب assignments
-    """
     id_to_student = {s["trainee_id"]: s for s in students}
     used = {}
 
@@ -223,9 +221,6 @@ def remaining_for_student(student, students, assignments):
     }
 
 
-# -----------------------------
-# DOCX template filling
-# -----------------------------
 def replace_in_paragraph(paragraph, mapping):
     full_text = "".join(run.text for run in paragraph.runs)
     if not full_text:
@@ -282,9 +277,6 @@ def fill_letter_docx(student, entity_name):
     return out_path
 
 
-# -----------------------------
-# Routes
-# -----------------------------
 @app.route("/", methods=["GET", "POST", "HEAD"])
 def index():
     if request.method == "HEAD":
