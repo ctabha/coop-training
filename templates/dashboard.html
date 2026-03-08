@@ -25,42 +25,42 @@
       {% endwith %}
 
       <div class="info">
-        <div><b>اسم المتدرب:</b> {{student.trainee_name}}</div>
-        <div><b>رقم المتدرب:</b> {{student.trainee_id}}</div>
-        <div><b>التخصص:</b> {{student.specialization}}</div>
-        <div><b>البرنامج:</b> {{student.program}}</div>
-        <div><b>إجمالي الفرص لتخصصك:</b> {{total_slots}}</div>
-        <div><b>المتبقي الآن:</b> {{total_remaining}}</div>
+        <div><b>اسم المتدرب:</b> {{ student.trainee_name }}</div>
+        <div><b>رقم المتدرب:</b> {{ student.trainee_id }}</div>
+        <div><b>التخصص:</b> {{ student.specialization }}</div>
+        <div><b>البرنامج:</b> {{ student.program }}</div>
+        <div><b>إجمالي الفرص لتخصصك:</b> {{ total_slots }}</div>
+        <div><b>المتبقي الآن:</b> {{ total_remaining }}</div>
       </div>
 
       <hr>
 
       {% if assigned and assigned.entity %}
         <div class="assigned">
-          <b>تم اختيار جهة تدريب:</b> {{assigned.entity}}
-          <div class="small">وقت الاختيار: {{assigned.assigned_at}}</div>
+          <b>تم اختيار جهة تدريب:</b> {{ assigned.entity }}
+          <div class="small">وقت الاختيار: {{ assigned.assigned_at }}</div>
         </div>
 
         <div class="actions">
-          <a class="btn" href="/download_letter/{{student.trainee_id}}">تحميل خطاب التوجيه (Word)</a>
+          <a class="btn" href="/download_letter/{{ student.trainee_id }}">تحميل خطاب التوجيه (Word)</a>
           <a class="btn ghost" href="/">رجوع</a>
         </div>
       {% else %}
         <div class="note">اختر جهة تدريب أو استخدم الاختيار التلقائي:</div>
 
-        <form method="post" action="/assign/{{student.trainee_id}}" class="form">
+        <form method="post" action="/assign/{{ student.trainee_id }}" class="form">
           <label>اختر جهة التدريب (يظهر المتبقي لكل جهة)</label>
           <select name="entity" required>
             <option value="">— اختر —</option>
             {% for e in available %}
-              <option value="{{e.name}}">{{e.name}} (المتبقي: {{e.remaining}} / الإجمالي: {{e.slots}})</option>
+              <option value="{{ e.name }}">{{ e.name }} (المتبقي: {{ e.remaining }} / الإجمالي: {{ e.total }})</option>
             {% endfor %}
           </select>
 
           <button type="submit">تأكيد الاختيار</button>
         </form>
 
-        <form method="post" action="/auto_assign/{{student.trainee_id}}" class="form" style="margin-top:10px;">
+        <form method="post" action="/auto_assign/{{ student.trainee_id }}" class="form" style="margin-top:10px;">
           <button class="btn ghost" type="submit">اختيار تلقائي (أول جهة فيها فرص)</button>
         </form>
 
