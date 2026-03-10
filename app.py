@@ -1,17 +1,32 @@
 import os
 import json
 from datetime import datetime
+
 from flask import Flask, render_template, request, redirect, url_for, send_file, flash
 import pandas as pd
 from docx import Document
 
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+import arabic_reshaper
+from bidi.algorithm import get_display
+
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 OUTPUT_DIR = os.path.join(BASE_DIR, "output")
 
 STUDENTS_XLSX = os.path.join(DATA_DIR, "students.xlsx")
 ASSIGNMENTS_JSON = os.path.join(DATA_DIR, "assignments.json")
 LETTER_TEMPLATE = os.path.join(DATA_DIR, "letter_template.docx")
+
+HEADER_IMG = os.path.join(STATIC_DIR, "header.jpg")
+AR_FONT = os.path.join(STATIC_DIR, "fonts", "NotoNaskhArabic-Regular.ttf")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -19,6 +34,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
 
+# -----------------------------
+# JSON helpers
+# -----------------------------
 def safe_load_json(path, default):
     try:
         if not os.path.exists(path):
@@ -48,6 +66,9 @@ def save_assignments(data):
     safe_save_json(ASSIGNMENTS_JSON, data)
 
 
+# -----------------------------
+# Excel reading from students.xlsx only
+# -----------------------------
 def find_entity_column(df):
     for c in df.columns:
         if str(c).strip() == "جهة التدريب":
@@ -139,7 +160,13 @@ def find_student(trainee_id):
     return None
 
 
+# -----------------------------
+# Slots calculation from Excel only
+# -----------------------------
 def compute_slots_from_excel(students):
+    """
+    كل صف في الإكسل = فرصة واحدة للجهة داخل نفس التخصص
+    """
     slots = {}
     for s in students:
         spec = (s.get("specialization") or "").strip()
@@ -221,6 +248,9 @@ def remaining_for_student(student, students, assignments):
     }
 
 
+# -----------------------------
+# Word template filling
+# -----------------------------
 def replace_in_paragraph(paragraph, mapping):
     full_text = "".join(run.text for run in paragraph.runs)
     if not full_text:
@@ -277,6 +307,78 @@ def fill_letter_docx(student, entity_name):
     return out_path
 
 
+# -----------------------------
+# PDF generation
+# -----------------------------
+def ar_text(text):
+    txt = str(text or "")
+    reshaped = arabic_reshaper.reshape(txt)
+    return get_display(reshaped)
+
+
+def build_pdf(student, entity_name):
+    pdf_name = f"خطاب_توجيه_{student.get('trainee_id','')}.pdf"
+    pdf_path = os.path.join(OUTPUT_DIR, pdf_name)
+
+    if "NotoArabic" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("NotoArabic", AR_FONT))
+
+    c = canvas.Canvas(pdf_path, pagesize=A4)
+    width, height = A4
+
+    if os.path.exists(HEADER_IMG):
+        c.drawImage(
+            HEADER_IMG,
+            1 * cm,
+            height - 4.2 * cm,
+            width=width - 2 * cm,
+            height=3 * cm,
+            preserveAspectRatio=True,
+            mask='auto'
+        )
+
+    y = height - 5.3 * cm
+
+    c.setFont("NotoArabic", 16)
+    c.drawRightString(width - 2 * cm, y, ar_text("خطاب توجيه متدرب تدريب تعاوني"))
+    y -= 1 * cm
+
+    c.setFont("NotoArabic", 12)
+
+    lines = [
+        f"اسم المتدرب: {student.get('trainee_name','')}",
+        f"رقم المتدرب: {student.get('trainee_id','')}",
+        f"رقم الجوال: {student.get('phone','')}",
+        f"التخصص: {student.get('specialization','')}",
+        f"البرنامج: {student.get('program','')}",
+        f"الجهة التدريبية: {entity_name}",
+        f"الرقم المرجعي: {student.get('course_ref','')}",
+        f"مشرف الكلية: {student.get('college_supervisor','')}",
+    ]
+
+    for line in lines:
+        c.drawRightString(width - 2 * cm, y, ar_text(line))
+        y -= 0.75 * cm
+
+    y -= 0.3 * cm
+
+    body_lines = [
+        "نفيدكم بتوجيه المتدرب الموضحة بياناته أعلاه للتدريب لديكم.",
+        "نأمل التكرم بالتعاون معه خلال فترة التدريب.",
+        "وتقبلوا خالص التحية والتقدير."
+    ]
+
+    for line in body_lines:
+        c.drawRightString(width - 2 * cm, y, ar_text(line))
+        y -= 0.8 * cm
+
+    c.save()
+    return pdf_path
+
+
+# -----------------------------
+# Routes
+# -----------------------------
 @app.route("/", methods=["GET", "POST", "HEAD"])
 def index():
     if request.method == "HEAD":
@@ -288,16 +390,19 @@ def index():
     trainee_id = (request.form.get("trainee_id") or "").strip()
     phone_last4 = (request.form.get("phone_last4") or "").strip()
 
+    if not trainee_id or not phone_last4:
+        flash("يجب إدخال الرقم التدريبي وآخر 4 أرقام من الجوال.", "error")
+        return redirect(url_for("index"))
+
     student = find_student(trainee_id)
     if not student:
         flash("رقم المتدرب غير موجود.", "error")
         return redirect(url_for("index"))
 
     phone = (student.get("phone") or "").strip()
-    if phone_last4:
-        if len(phone) < 4 or not phone.endswith(phone_last4):
-            flash("آخر 4 أرقام من الجوال غير صحيحة.", "error")
-            return redirect(url_for("index"))
+    if len(phone) < 4 or not phone.endswith(phone_last4):
+        flash("آخر 4 أرقام من الجوال غير صحيحة.", "error")
+        return redirect(url_for("index"))
 
     return redirect(url_for("dashboard", trainee_id=trainee_id))
 
@@ -394,12 +499,26 @@ def download_letter(trainee_id):
         return redirect(url_for("dashboard", trainee_id=trainee_id))
 
     entity_name = assigned["entity"]
-    try:
-        out_path = fill_letter_docx(student, entity_name)
-    except Exception as e:
-        return f"Error generating letter: {e}", 500
-
+    out_path = fill_letter_docx(student, entity_name)
     return send_file(out_path, as_attachment=True, download_name="خطاب_التوجيه.docx")
+
+
+@app.route("/download_pdf/<trainee_id>", methods=["GET"])
+def download_pdf(trainee_id):
+    students_all = load_students()
+    student = next((s for s in students_all if s["trainee_id"] == str(trainee_id)), None)
+    if not student:
+        return "Trainee not found", 404
+
+    assignments = load_assignments()
+    assigned = assignments.get(str(trainee_id))
+    if not assigned or not assigned.get("entity"):
+        flash("لا يمكن الطباعة قبل اختيار جهة التدريب.", "error")
+        return redirect(url_for("dashboard", trainee_id=trainee_id))
+
+    entity_name = assigned["entity"]
+    pdf_path = build_pdf(student, entity_name)
+    return send_file(pdf_path, as_attachment=True, download_name="خطاب_التوجيه.pdf")
 
 
 @app.route("/health")
